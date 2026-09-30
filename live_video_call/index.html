@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gemini Live Video Call - IP Camera</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --border: #334155;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --accent: #38bdf8;
+      --accent-hover: #0284c7;
+      --gemini-grad: linear-gradient(135deg, #38bdf8, #818cf8, #c084fc);
+      --badge-bg: #032d42;
+      --success: #10b981;
+      --danger: #ef4444;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    header {
+      background-color: var(--card-bg);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 1.25rem;
+      font-weight: 700;
+      background: var(--gemini-grad);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .header-badges {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.8rem;
+      padding: 5px 12px;
+      border-radius: 9999px;
+      background-color: rgba(255, 255, 255, 0.08);
+      border: 1px solid var(--border);
+    }
+    .badge .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: var(--success);
+    }
+    .badge .dot.pulse {
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse {
+      0% { opacity: 0.4; }
+      50% { opacity: 1; transform: scale(1.2); }
+      100% { opacity: 0.4; }
+    }
+    main {
+      flex: 1;
+      display: flex;
+      gap: 16px;
+      padding: 16px;
+      height: calc(100vh - 65px);
+    }
+    .video-panel {
+      flex: 1.2;
+      background-color: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .panel-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.95rem;
+      font-weight: 600;
+    }
+    .video-container {
+      flex: 1;
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .video-container img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+    }
+    .video-overlay-stats {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      background: rgba(0, 0, 0, 0.7);
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      color: #94a3b8;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(4px);
+    }
+    .chat-panel {
+      flex: 1;
+      background-color: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .messages-container {
+      flex: 1;
+      padding: 16px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .message {
+      max-width: 85%;
+      padding: 12px 16px;
+      border-radius: 12px;
+      font-size: 0.95rem;
+      line-height: 1.5;
+    }
+    .message.user {
+      align-self: flex-end;
+      background: #2563eb;
+      color: white;
+      border-bottom-right-radius: 3px;
+    }
+    .message.gemini {
+      align-self: flex-start;
+      background: #334155;
+      color: var(--text);
+      border-bottom-left-radius: 3px;
+    }
+    .message.gemini .sender {
+      font-size: 0.75rem;
+      font-weight: 700;
+      margin-bottom: 4px;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .suggested-prompts {
+      padding: 8px 16px;
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      border-top: 1px solid var(--border);
+      background: rgba(0, 0, 0, 0.2);
+    }
+    .chip {
+      background: #1e293b;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      padding: 6px 12px;
+      border-radius: 9999px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.2s ease;
+    }
+    .chip:hover {
+      background: #334155;
+      color: #fff;
+      border-color: var(--accent);
+    }
+    .input-bar {
+      padding: 14px 16px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 10px;
+    }
+    .input-bar input {
+      flex: 1;
+      padding: 10px 16px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #0f172a;
+      color: #fff;
+      outline: none;
+      font-size: 0.95rem;
+    }
+    .input-bar input:focus {
+      border-color: var(--accent);
+    }
+    .input-bar button {
+      padding: 10px 20px;
+      background: var(--accent);
+      color: #0f172a;
+      font-weight: 600;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s ease;
+    }
+    .input-bar button:hover {
+      background: var(--accent-hover);
+    }
+    .typing-indicator {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background-color: var(--accent);
+      animation: pulse 1s infinite;
+      margin-left: 4px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span>✨</span> Gemini Live Video Call
+    </div>
+    <div class="header-badges">
+      <div class="badge">
+        <span class="dot" id="cam-dot"></span>
+        <span id="cam-status">Camera: Connecting</span>
+      </div>
+      <div class="badge">
+        <span class="dot pulse" id="stream-dot"></span>
+        <span id="stream-status">Gemini Live: Connecting</span>
+      </div>
+      <div class="badge" id="frame-counter">
+        Frames Sent: 0
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- Left Panel: Live Camera Feed -->
+    <div class="video-panel">
+      <div class="panel-header">
+        <span>IP Camera Live Stream</span>
+        <span style="font-size: 0.8rem; color: var(--text-muted);">Sampling ~1 FPS to Gemini Live</span>
+      </div>
+      <div class="video-container">
+        <img id="video-stream" src="/video_feed" alt="Camera Feed" onerror="handleVideoError(this)" />
+        <div class="video-overlay-stats" id="overlay-stats">
+          Waiting for video feed...
+        </div>
+      </div>
+    </div>
+
+    <!-- Right Panel: Gemini Live Chat -->
+    <div class="chat-panel">
+      <div class="panel-header">
+        <span>Live Visual Understanding</span>
+        <span id="model-name" style="font-size: 0.8rem; color: var(--accent);">gemini-3.8-live</span>
+      </div>
+
+      <div class="messages-container" id="messages">
+        <div class="message gemini">
+          <div class="sender">Gemini Live</div>
+          <div>Hello! I am connected to your camera feed. Ask me anything about what I see!</div>
+        </div>
+      </div>
+
+      <div class="suggested-prompts">
+        <button class="chip" onclick="sendQuick('What do you see?')">What do you see?</button>
+        <button class="chip" onclick="sendQuick('Is there a person in front of the camera?')">Is there a person?</button>
+        <button class="chip" onclick="sendQuick('What color is the object in front of the camera?')">What color is the object?</button>
+        <button class="chip" onclick="sendQuick('Describe the environment in detail.')">Describe environment</button>
+      </div>
+
+      <div class="input-bar">
+        <input type="text" id="user-input" placeholder="Ask about the camera feed..." onkeydown="handleKey(event)" />
+        <button id="send-btn" onclick="submitQuestion()">Ask</button>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const wsPort = parseInt(window.location.port || "8000") + 1;
+    const wsUrl = `ws://${window.location.hostname}:${wsPort}`;
+    let socket;
+    let currentGeminiMsg = null;
+    let framesSent = 0;
+
+    function initWebSocket() {
+      socket = new WebSocket(wsUrl);
+
+      socket.onopen = () => {
+        document.getElementById("stream-status").innerText = "Gemini Live: Connected";
+        document.getElementById("stream-dot").style.backgroundColor = "var(--success)";
+      };
+
+      socket.onclose = () => {
+        document.getElementById("stream-status").innerText = "Gemini Live: Reconnecting...";
+        document.getElementById("stream-dot").style.backgroundColor = "var(--danger)";
+        setTimeout(initWebSocket, 2000);
+      };
+
+      socket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          handleServerMessage(data);
+        } catch (e) {
+          console.error("Failed to parse WS msg", e);
+        }
+      };
+    }
+
+    function handleServerMessage(data) {
+      if (data.type === "frame_sent") {
+        framesSent = data.count;
+        document.getElementById("frame-counter").innerText = `Frames Sent: ${framesSent}`;
+        document.getElementById("overlay-stats").innerText = `Live Feed | Sent: ${framesSent} frames to Gemini`;
+      } else if (data.type === "chunk") {
+        if (!currentGeminiMsg) {
+          currentGeminiMsg = appendMessage("gemini", "");
+        }
+        currentGeminiMsg.innerText += data.text;
+        scrollToBottom();
+      } else if (data.type === "turn_complete") {
+        currentGeminiMsg = null;
+        document.getElementById("send-btn").disabled = false;
+      } else if (data.type === "camera_status") {
+        const dot = document.getElementById("cam-dot");
+        const txt = document.getElementById("cam-status");
+        if (data.healthy) {
+          dot.style.backgroundColor = "var(--success)";
+          txt.innerText = "Camera: Active";
+        } else {
+          dot.style.backgroundColor = "var(--danger)";
+          txt.innerText = "Camera: No signal";
+        }
+      } else if (data.type === "config") {
+        if (data.model) {
+          document.getElementById("model-name").innerText = data.model;
+        }
+      }
+    }
+
+    function appendMessage(role, text) {
+      const container = document.getElementById("messages");
+      const msgDiv = document.createElement("div");
+      msgDiv.className = `message ${role}`;
+
+      if (role === "gemini") {
+        const sender = document.createElement("div");
+        sender.className = "sender";
+        sender.innerText = "Gemini Live";
+        msgDiv.appendChild(sender);
+      }
+
+      const content = document.createElement("div");
+      content.innerText = text;
+      msgDiv.appendChild(content);
+
+      container.appendChild(msgDiv);
+      scrollToBottom();
+      return content;
+    }
+
+    function scrollToBottom() {
+      const container = document.getElementById("messages");
+      container.scrollTop = container.scrollHeight;
+    }
+
+    function submitQuestion() {
+      const input = document.getElementById("user-input");
+      const text = input.value.trim();
+      if (!text || !socket || socket.readyState !== WebSocket.OPEN) return;
+
+      appendMessage("user", text);
+      input.value = "";
+      document.getElementById("send-btn").disabled = true;
+
+      currentGeminiMsg = null;
+      socket.send(JSON.stringify({ type: "ask", question: text }));
+    }
+
+    function sendQuick(prompt) {
+      document.getElementById("user-input").value = prompt;
+      submitQuestion();
+    }
+
+    function handleKey(e) {
+      if (e.key === "Enter") submitQuestion();
+    }
+
+    function handleVideoError(img) {
+      document.getElementById("overlay-stats").innerText = "Camera disconnected or offline";
+    }
+
+    window.onload = () => {
+      initWebSocket();
+    };
+  </script>
+</body>
+</html>
