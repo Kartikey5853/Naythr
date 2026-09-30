@@ -1,4 +1,4 @@
-"""Gemini Live Video Call - IP Camera + PC Mic/Speaker Visual Assistant.
+"""Gemini Live Video Call - IP Camera + PC Mic/Speaker with 'Hey Marvin' Wake Word.
 
 Open this folder and run:
     python main.py
@@ -9,35 +9,47 @@ Open this folder and run:
 # ==============================================================================
 
 # IP Camera URL (e.g. "http://192.168.1.4:8080/video", "rtsp://...", or "0" for webcam)
-CAMERA_URL = "http://172.31.3.232:8080/video"
+import os
+CAMERA_URL = os.getenv(
+    "CAMERA_URL",
+    os.getenv("IP_CAMERA_URL", "http://10.10.10.128:8080/video"),
+)
 
 # Gemini API Key (leave empty "" to automatically load from .env in the project)
 
 
-
 # Live Model & Frame Rate
-MODEL_NAME = "gemini-3.1-flash-live-preview"   # Fast Multimodal Live model (fallback: gemini-3.8-live)
-FRAME_RATE = 1.0                              # Frames per second sent to Gemini (~1 FPS recommended)
+MODEL_NAME = os.getenv("GEMINI_LIVE_MODEL", "gemini-3.1-flash-live-preview")  # Fast Multimodal Live model
+FRAME_RATE = 1.0                              # Video context frames sent to Gemini (~1 FPS recommended)
 
 # Wake-Up Call Settings
-ENABLE_WAKE_UP_CALL = True       # Gemini speaks first to confirm it is awake and watching the camera
-WAKE_UP_PROMPT = "Wake up call: Greet the user in one short, natural sentence and confirm you can see their live camera feed."
+ENABLE_WAKE_UP_CALL = False                   # Waits for "Hey Marvin" trigger instead of auto-speaking on connect
+WAKE_UP_PROMPT = "Wake up call: Greet the user in one short sentence as Marvin and confirm you can see their live camera feed."
 
 # Microphone & Audio Settings
-ENABLE_MIC = True                # Enable PC microphone
-ENABLE_SPEAKER = True            # Enable PC speaker audio output
-MIC_THRESHOLD_DB = 70.0          # Sensitivity threshold in dB (typical speech is 50-70 dB; background is 30-45 dB)
-SHOW_DECIBEL_METER = True        # Display real-time microphone sound level meter
+ENABLE_MIC = True                             # Enable PC microphone
+ENABLE_SPEAKER = True                         # Enable PC speaker audio output
+MIC_THRESHOLD_DB = 55.0                       # Baseline voice sensitivity threshold in dB
+SILENCE_WAIT_SECONDS = 2.8                    # Pause tolerance: wait 2.8s of quiet before ending user turn
+WAKE_THRESHOLD = 0.38                         # Confidence score threshold for "Hey Marvin" in noisy environments
+VAD_THRESHOLD = 0.35                          # Silero VAD threshold to reject non-speech ambient noise
 
 # ==============================================================================
 
 import argparse
 import asyncio
 import logging
-import os
 from pathlib import Path
+import queue
 import sys
+import threading
 import time
+from typing import Optional, Callable
+
+import numpy as np
+import sounddevice as sd
+from google.genai import types
+from openwakeword.model import Model
 
 # Windows console encoding fix for clean terminal output
 if sys.platform == "win32":
@@ -49,10 +61,11 @@ if sys.platform == "win32":
 
 # Ensure imports work whether run as `python main.py` or `python -m live_video_call.main`
 _CURRENT_DIR = Path(__file__).resolve().parent
+_ROOT_DIR = _CURRENT_DIR.parent
 if str(_CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(_CURRENT_DIR))
-if str(_CURRENT_DIR.parent) not in sys.path:
-    sys.path.insert(0, str(_CURRENT_DIR.parent))
+if str(_ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(_ROOT_DIR))
 
 try:
     from .camera_stream import CameraStream
@@ -68,6 +81,22 @@ except (ImportError, ValueError):
 # Silence verbose background logs
 logging.basicConfig(level=logging.WARNING)
 
+# Marvin ONNX Model Path
+MARVIN_MODEL_PATH = _ROOT_DIR / "models" / "hey_marvin_v0.1.onnx"
+if not MARVIN_MODEL_PATH.exists():
+    MARVIN_MODEL_PATH = _CURRENT_DIR / "models" / "hey_marvin_v0.1.onnx"
+if not MARVIN_MODEL_PATH.exists():
+    MARVIN_MODEL_PATH = Path("models/hey_marvin_v0.1.onnx").resolve()
+
+# Assistant Persona
+MARVIN_SYSTEM_PROMPT = (
+    "You are Marvin, a helpful real-time AI assistant in a live video and voice call with the user. "
+    "Your name is Marvin. When asked who you are, what your name is, or to introduce yourself, always state clearly that you are Marvin. "
+    "You continuously receive real-time video frames from the user's camera and live audio from their microphone. "
+    "Prioritize immediate hazards, walkable path, left/center/right direction, obstacles, vehicles, and people. Mention the most useful information first. "
+    "Respond naturally, concisely, and directly by voice to what you see and hear, normally in one or two short sentences."
+)
+
 
 def get_api_key(cli_key: str = "") -> str:
     """Resolve API key: Top of file > CLI arg > .env file."""
@@ -80,27 +109,216 @@ def get_api_key(cli_key: str = "") -> str:
     return os.getenv("GEMINI_API_KEY", "").strip()
 
 
+class MarvinWakeWordDetector:
+    """Robust 'Hey Marvin' detector with Silero VAD to reject background crowd noise."""
+
+    def __init__(
+        self,
+        model_path: str | Path,
+        threshold: float = WAKE_THRESHOLD,
+        vad_threshold: float = VAD_THRESHOLD,
+    ):
+        self.model_path = str(model_path)
+        if not os.path.isfile(self.model_path):
+            raise FileNotFoundError(f"Marvin model ONNX file not found at: {self.model_path}")
+
+        print(f"[INIT] Loading Marvin wake word model ({Path(self.model_path).name}) with VAD={vad_threshold}...")
+        self.model = Model(
+            wakeword_models=[self.model_path],
+            inference_framework="onnx",
+            vad_threshold=vad_threshold,
+        )
+        self.model_key = "hey_marvin_v0.1"
+        self.threshold = threshold
+        self.cooldown = 0
+        self.current_score: float = 0.0
+        print("[INIT] Marvin wake word model ready!")
+
+    def detect(self, samples: np.ndarray) -> bool:
+        chunk = samples.flatten()
+        prediction = self.model.predict(chunk)
+        score = prediction.get(self.model_key, 0.0)
+        if not score and prediction:
+            score = next(iter(prediction.values()), 0.0)
+
+        self.current_score = float(score)
+
+        if self.cooldown > 0:
+            self.cooldown -= 1
+            return False
+
+        if score >= self.threshold:
+            self.cooldown = 32  # ~2.5s cooldown at 80ms/chunk
+            return True
+
+        return False
+
+
+class GatedAudioDevice(AudioDevice):
+    """Audio device that gates mic audio on 'Hey Marvin' and adapts to crowded noise floors."""
+
+    STATE_WAITING = "WAITING FOR TRIGGER"
+    STATE_SPEAK = "SPEAK"
+    STATE_RESPONDING = "RESPONDING"
+
+    def __init__(
+        self,
+        wake_detector: MarvinWakeWordDetector,
+        threshold_db: float = MIC_THRESHOLD_DB,
+        silence_wait_sec: float = SILENCE_WAIT_SECONDS,
+        no_speech_timeout: float = 8.0,
+        max_speak_duration: float = 25.0,
+    ):
+        # OpenWakeWord operates on 1280 samples at 16kHz (80 ms)
+        super().__init__(
+            input_sample_rate=16000,
+            output_sample_rate=24000,
+            chunk_size=1280,
+            threshold_db=threshold_db,
+        )
+        self.wake_detector = wake_detector
+        self.silence_wait_sec = silence_wait_sec
+        self.no_speech_timeout = no_speech_timeout
+        self.max_speak_duration = max_speak_duration
+
+        self.state = self.STATE_WAITING
+        self.user_has_spoken = False
+        self.last_speech_time: Optional[float] = None
+        self.speak_start_time: Optional[float] = None
+
+        # Dynamic ambient noise floor tracking (exponential moving average)
+        self.ambient_rms: float = 80.0
+        self.speech_energy_ratio: float = 1.6  # Speech must be 1.6x ambient RMS
+
+        # Callbacks dispatched thread-safely
+        self.on_wake_detected: Optional[Callable[[], None]] = None
+        self.on_speech_finished: Optional[Callable[[], None]] = None
+        self.on_speech_timeout: Optional[Callable[[], None]] = None
+        self.on_state_change: Optional[Callable[[str], None]] = None
+
+    def set_state(self, new_state: str):
+        """Thread-safe state change."""
+        if self.state == new_state:
+            return
+        self.state = new_state
+        if new_state == self.STATE_SPEAK:
+            self.user_has_spoken = False
+            self.last_speech_time = None
+            self.speak_start_time = time.time()
+        elif new_state == self.STATE_WAITING:
+            self.user_has_spoken = False
+            self.last_speech_time = None
+            self.speak_start_time = None
+
+        if self._loop and self.on_state_change and not self._loop.is_closed():
+            self._loop.call_soon_threadsafe(self.on_state_change, new_state)
+
+    def _mic_callback(self, indata, frames, time_info, status):
+        """Callback for microphone chunks."""
+        if not self._running:
+            return
+
+        samples = np.frombuffer(indata, dtype=np.int16)
+        rms = float(np.sqrt(np.mean(samples.astype(np.float32) ** 2)))
+        db = float(20.0 * np.log10(max(1.0, rms)))
+
+        self.current_rms = rms
+        self.current_db = db
+
+        # Track ambient noise floor adaptively during quiet or waiting periods
+        if self.state == self.STATE_WAITING or (self.state == self.STATE_SPEAK and not self.user_has_spoken):
+            # Slow adaptation to current room volume
+            self.ambient_rms = 0.96 * self.ambient_rms + 0.04 * rms
+
+        # Speech threshold adapts dynamically to ambient noise
+        adaptive_speech_threshold = max(220.0, self.ambient_rms * self.speech_energy_ratio)
+        is_speech_active = rms >= adaptive_speech_threshold or db >= self.threshold_db
+        self.is_voice_detected = is_speech_active
+
+        chunk_bytes = bytes(indata)
+
+        # --------------------------------------------------------------
+        # STATE 1: WAITING FOR TRIGGER ("Hey Marvin")
+        # --------------------------------------------------------------
+        if self.state == self.STATE_WAITING:
+            detected = self.wake_detector.detect(samples)
+            if detected:
+                self.set_state(self.STATE_SPEAK)
+                if self._loop and self.on_wake_detected and not self._loop.is_closed():
+                    self._loop.call_soon_threadsafe(self.on_wake_detected)
+            return
+
+        # --------------------------------------------------------------
+        # STATE 2: SPEAK (Streaming user voice to Gemini)
+        # --------------------------------------------------------------
+        if self.state == self.STATE_SPEAK:
+            now = time.time()
+
+            # Stream audio chunk to Gemini Live
+            if self._loop and self._in_queue and not self._loop.is_closed():
+                try:
+                    self._loop.call_soon_threadsafe(self._in_queue.put_nowait, chunk_bytes)
+                except Exception:
+                    pass
+
+            # Voice activity check with adaptive threshold
+            if is_speech_active:
+                self.user_has_spoken = True
+                self.last_speech_time = now
+
+            if self.user_has_spoken and self.last_speech_time:
+                silence_duration = now - self.last_speech_time
+                # Only end turn after generous pause (2.8s) of quiet
+                if silence_duration >= self.silence_wait_sec or (
+                    self.speak_start_time and (now - self.speak_start_time) >= self.max_speak_duration
+                ):
+                    self.set_state(self.STATE_RESPONDING)
+                    if self._loop and self.on_speech_finished and not self._loop.is_closed():
+                        self._loop.call_soon_threadsafe(self.on_speech_finished)
+            else:
+                # Trigger fired but user did not speak within timeout window
+                if self.speak_start_time and (now - self.speak_start_time) >= self.no_speech_timeout:
+                    self.set_state(self.STATE_WAITING)
+                    if self._loop and self.on_speech_timeout and not self._loop.is_closed():
+                        self._loop.call_soon_threadsafe(self.on_speech_timeout)
+            return
+
+        # --------------------------------------------------------------
+        # STATE 3: RESPONDING (Gemini is answering)
+        # --------------------------------------------------------------
+        if self.state == self.STATE_RESPONDING:
+            # User barge-in check (very loud intentional interruption)
+            if self._is_speaking and db >= (self.threshold_db + 14.0):
+                self.interrupt()
+
+
 async def run_live_call(
     camera_source: str,
     api_key: str,
     model: str,
     fps: float,
-    enable_mic: bool = True,
-    enable_speaker: bool = True,
     threshold_db: float = MIC_THRESHOLD_DB,
-    show_meter: bool = SHOW_DECIBEL_METER,
+    silence_wait_sec: float = SILENCE_WAIT_SECONDS,
     enable_wake_up_call: bool = ENABLE_WAKE_UP_CALL,
     wake_up_prompt: str = WAKE_UP_PROMPT,
 ):
-    """Main live call session with simultaneous camera, microphone, and speaker."""
+    """Main live session combining Camera, Marvin Wake Word, and Gemini Live."""
     frame_interval = 1.0 / max(0.1, fps)
 
     print("=" * 70)
-    print(" [LIVE VIDEO CALL] Gemini Live + IP Camera + PC Microphone/Speaker ")
+    print(" [MARVIN LIVE CALL] Gemini Live + IP Camera + 'Hey Marvin' Trigger")
     print("=" * 70)
 
-    # 1. Initialize Camera
-    print(f"\n[1/3] Connecting to Camera: {camera_source}")
+    # 1. Initialize Marvin Wake Word Detector with VAD for crowded rooms
+    print(f"\n[1/3] Loading Wake Word Detector: {MARVIN_MODEL_PATH.name}...")
+    wake_detector = MarvinWakeWordDetector(
+        model_path=MARVIN_MODEL_PATH,
+        threshold=WAKE_THRESHOLD,
+        vad_threshold=VAD_THRESHOLD,
+    )
+
+    # 2. Initialize Camera
+    print(f"\n[2/3] Connecting to Camera: {camera_source}")
     camera = CameraStream(source=camera_source)
     camera.start()
 
@@ -110,51 +328,38 @@ async def run_live_call(
         await asyncio.sleep(0.25)
 
     if camera.is_healthy():
-        print("   [+] Camera connected and receiving live frames.")
+        print("   [+] Camera connected and streaming live frames.")
     else:
         print(f"   [!] Camera at '{camera_source}' not detected yet (auto-reconnecting).")
 
-    # 2. Initialize Audio
-    audio = None
-    if enable_mic or enable_speaker:
-        print(f"\n[2/3] Initializing Audio (Threshold: {threshold_db:.1f} dB)...")
-        try:
-            audio = AudioDevice(threshold_db=threshold_db)
-            print(f"   [+] Microphone & Speaker active. (Voice gate: {threshold_db:.1f} dB)")
-        except Exception as e:
-            print(f"   [!] Audio initialization warning: {e}")
-            audio = None
+    # 3. Initialize Gated Audio
+    print(f"\n[3/3] Initializing Gated Audio (Silence Wait: {silence_wait_sec:.1f}s)...")
+    audio = GatedAudioDevice(
+        wake_detector=wake_detector,
+        threshold_db=threshold_db,
+        silence_wait_sec=silence_wait_sec,
+    )
 
-    # 3. Connect to Gemini Live
-    print(f"\n[3/3] Connecting to Gemini Live ({model})...")
+    # 4. Connect to Gemini Live Session
+    print(f"\nConnecting to Gemini Live ({model})...")
     session = GeminiLiveSession(
         api_key=api_key,
         model=model,
         camera=camera,
         audio=audio,
         frame_interval_sec=frame_interval,
-        system_instruction=(
-            "You are a helpful AI assistant in a live video and voice call with the user. "
-            "You continuously receive real-time video frames from the user's camera and live audio from their microphone. "
-            "When receiving a wake-up call or greeting, acknowledge warmly in one concise sentence, confirm you are awake, and confirm you can see the camera feed. "
-            "Respond naturally, concisely, and directly by voice to what you see and hear."
-        ),
+        system_instruction=MARVIN_SYSTEM_PROMPT,
     )
 
-    # Transcription & Speech callbacks for console
     gemini_is_speaking_turn = False
 
     def on_user_speech(transcript: str):
-        nonlocal gemini_is_speaking_turn
-        gemini_is_speaking_turn = False
-        sys.stdout.write("\r" + " " * 60 + "\r")
-        print(f"You (Voice) > {transcript}")
+        print(f"\nYou (Voice) > {transcript}")
 
     def on_gemini_speech(chunk: str):
         nonlocal gemini_is_speaking_turn
         if not gemini_is_speaking_turn:
-            sys.stdout.write("\r" + " " * 60 + "\r")
-            print("Gemini > ", end="", flush=True)
+            print("\nMarvin > ", end="", flush=True)
             gemini_is_speaking_turn = True
         print(chunk, end="", flush=True)
 
@@ -163,94 +368,83 @@ async def run_live_call(
         if gemini_is_speaking_turn:
             print("\n")
             gemini_is_speaking_turn = False
+        # Reset back to standby listening for the next trigger
+        audio.set_state(GatedAudioDevice.STATE_WAITING)
+        print('[STANDBY] Say "Hey Marvin"')
 
     def on_interrupted():
         nonlocal gemini_is_speaking_turn
         print("\n[Interrupted by you]")
         gemini_is_speaking_turn = False
+        audio.set_state(GatedAudioDevice.STATE_SPEAK)
 
     session.on_user_speech = on_user_speech
     session.on_gemini_speech = on_gemini_speech
     session.on_turn_complete = on_turn_complete
     session.on_interrupted = on_interrupted
 
-    try:
-        await session.connect()
-        print(f"   [+] Connected to Gemini Live ({session.model})!")
-    except Exception as e:
-        print(f"   [-] Failed to connect: {e}")
-        if audio:
-            audio.stop()
-        camera.stop()
-        return
+    # State transition event handlers
+    def handle_wake_detected():
+        print("\n" + "=" * 50)
+        print(" >>> [TRIGGER DETECTED] \"Hey Marvin\" <<<")
+        print(" [SPEAK] Listening to your question (take your time)...")
+        print("=" * 50 + "\n")
+        # Send fresh camera frame immediately
+        async def _push_fresh_frame():
+            if camera and getattr(session, "_session", None) and session.is_connected:
+                fresh_jpeg = camera.get_latest_jpeg()
+                if fresh_jpeg:
+                    try:
+                        await session._session.send_realtime_input(
+                            video=types.Blob(data=fresh_jpeg, mime_type="image/jpeg")
+                        )
+                    except Exception:
+                        pass
+        asyncio.create_task(_push_fresh_frame())
 
-    # 4. Wake-Up Call before user interaction begins
-    if enable_wake_up_call:
-        print("\n[+] Initiating Wake-Up Call with Gemini...")
-
-        # Wait briefly for camera to push at least 1 live frame if camera is connected
-        if camera:
-            for _ in range(15):
-                if session.frames_sent > 0:
-                    break
-                await asyncio.sleep(0.1)
-
-        wake_up_done = asyncio.Event()
-        prev_turn_callback = session.on_turn_complete
-
-        def _wake_turn_complete():
-            if prev_turn_callback:
+    def handle_speech_finished():
+        nonlocal gemini_is_speaking_turn
+        gemini_is_speaking_turn = False
+        print("\n[RESPONDING] Processing your question...")
+        async def _signal_speech_end():
+            if getattr(session, "_session", None) and session.is_connected:
                 try:
-                    prev_turn_callback()
+                    await session._session.send_realtime_input(audio_stream_end=True)
                 except Exception:
                     pass
-            wake_up_done.set()
+        asyncio.create_task(_signal_speech_end())
 
-        session.on_turn_complete = _wake_turn_complete
+    def handle_speech_timeout():
+        print('[STANDBY] No speech detected after trigger. Say "Hey Marvin"')
 
-        try:
-            await session.wake_up(wake_up_prompt)
-            # Wait up to 7 seconds for Gemini to speak its wake-up greeting
-            try:
-                await asyncio.wait_for(wake_up_done.wait(), timeout=7.0)
-            except asyncio.TimeoutError:
-                pass
-        except Exception as e:
-            print(f"   [!] Wake-up call notice: {e}")
-        finally:
-            session.on_turn_complete = prev_turn_callback
+    audio.on_wake_detected = handle_wake_detected
+    audio.on_speech_finished = handle_speech_finished
+    audio.on_speech_timeout = handle_speech_timeout
 
-        print("[+] Wake-up call completed. Gemini is awake and ready!\n")
+    try:
+        await session.connect()
+        print(f"[+] Connected to Gemini Live ({session.model})!\n")
+    except Exception as e:
+        print(f"[-] Failed to connect: {e}")
+        audio.stop()
+        camera.stop()
+        return
 
     # Call Active Screen
     print("=" * 70)
     print(" >>> CALL IN PROGRESS <<<")
-    print(" * Speak into your PC microphone - Gemini hears you and talks back!")
-    print(f" * Voice threshold: {threshold_db:.1f} dB (Change in main.py top)")
-    print(" * Camera is streaming live frames (~1 FPS).")
+    print(" * Say \"Hey Marvin\" to speak - mic audio is gated until triggered!")
+    print(f" * Pause tolerance: {silence_wait_sec:.1f}s (you will not be cut off during pauses)")
+    print(" * Dynamic noise tracking active for crowded rooms.")
+    print(" * Camera streams context continuously (~1 FPS).")
     print(" * You can also type questions below and press Enter anytime.")
-    print(" * Type 'wake' to trigger wake-up call again, 'status' for stats, or 'exit' to quit.")
+    print(" * Type 'status' for stats, or 'exit' to quit.")
     print("=" * 70 + "\n")
+    print('[STANDBY] Say "Hey Marvin"\n')
 
     loop = asyncio.get_running_loop()
 
-    # Optional background task to display live decibel meter
-    meter_task = None
-    if show_meter and audio:
-        async def meter_loop():
-            last_meter_time = 0
-            while session.is_connected:
-                await asyncio.sleep(0.4)
-                # Only print meter when Gemini is not speaking
-                if not gemini_is_speaking_turn and audio:
-                    meter_str = audio.get_meter_display()
-                    # Print in-place using carriage return
-                    sys.stdout.write(f"\r[Mic: {meter_str}] ")
-                    sys.stdout.flush()
-
-        meter_task = asyncio.create_task(meter_loop())
-
-    # Asynchronous keyboard input queue so typing never blocks the session
+    # Clean asynchronous keyboard input queue
     input_queue = asyncio.Queue()
 
     def keyboard_reader():
@@ -263,15 +457,13 @@ async def run_live_call(
             except Exception:
                 break
 
-    import threading
     kb_thread = threading.Thread(target=keyboard_reader, daemon=True, name="KeyboardReader")
     kb_thread.start()
 
     try:
         while session.is_connected:
             try:
-                # Wait for typed input or check loop every 0.2s
-                text = await asyncio.wait_for(input_queue.get(), timeout=0.2)
+                text = await asyncio.wait_for(input_queue.get(), timeout=0.25)
             except asyncio.TimeoutError:
                 continue
 
@@ -283,36 +475,33 @@ async def run_live_call(
                 break
 
             if text.lower() in {"wake", "wakeup", "wake up"}:
-                gemini_is_speaking_turn = False
-                print(f"\nYou (Wake-Up) > {text}")
-                try:
-                    await session.wake_up(wake_up_prompt)
-                except Exception as e:
-                    print(f"\n[-] Error sending wake-up call: {e}\n")
+                handle_wake_detected()
                 continue
 
             if text.lower() == "status":
                 stats = camera.get_stats()
                 mic_db = audio.current_db if audio else 0.0
+                ambient = 20.0 * np.log10(max(1.0, audio.ambient_rms)) if audio else 0.0
                 print(f"\n--- System Status ---")
+                print(f"State:        {audio.state}")
                 print(f"Camera:       {'Active [OK]' if stats['healthy'] else 'No Signal [!]'}")
                 print(f"Frames Sent:  {session.frames_sent}")
-                print(f"Mic Level:    {mic_db:.1f} dB (Threshold: {threshold_db:.1f} dB)")
+                print(f"Mic Level:    {mic_db:.1f} dB (Ambient Noise Floor: {ambient:.1f} dB)")
+                print(f"Pause Wait:   {silence_wait_sec:.1f}s")
                 print(f"Gemini Model: {session.model}")
                 print("---------------------\n")
                 continue
 
-            # User typed a question
+            # User typed a question directly
             gemini_is_speaking_turn = False
             print(f"\nYou (Typed) > {text}")
+            audio.set_state(GatedAudioDevice.STATE_RESPONDING)
             try:
                 await session.send_text(text)
             except Exception as e:
                 print(f"\n[-] Error sending text: {e}\n")
 
     finally:
-        if meter_task and not meter_task.done():
-            meter_task.cancel()
         print("\n\nEnding live call...")
         await session.close()
         camera.stop()
@@ -320,7 +509,7 @@ async def run_live_call(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Gemini Live Video Call with IP Camera & Mic")
+    parser = argparse.ArgumentParser(description="Gemini Live Video Call with IP Camera & 'Hey Marvin' Wake Word")
     parser.add_argument(
         "--camera",
         type=str,
@@ -346,90 +535,43 @@ def main():
         help=f"Video frame rate sent to Gemini (default: {FRAME_RATE} FPS)",
     )
     parser.add_argument(
-        "--threshold",
+        "--threshold-db",
         type=float,
         default=MIC_THRESHOLD_DB,
-        help=f"Mic dB sensitivity threshold (default: {MIC_THRESHOLD_DB} dB)",
+        help=f"Baseline mic dB sensitivity threshold (default: {MIC_THRESHOLD_DB} dB)",
     )
     parser.add_argument(
-        "--no-mic",
-        action="store_true",
-        help="Disable microphone input",
+        "--silence-wait",
+        type=float,
+        default=SILENCE_WAIT_SECONDS,
+        help=f"Pause wait in seconds before responding (default: {SILENCE_WAIT_SECONDS}s)",
     )
-    parser.add_argument(
-        "--no-speaker",
-        action="store_true",
-        help="Disable speaker audio output",
-    )
-    parser.add_argument(
-        "--no-meter",
-        action="store_true",
-        help="Disable live decibel meter display",
-    )
-    parser.add_argument(
-        "--no-wake-up",
-        action="store_true",
-        help="Disable automatic wake-up greeting on call start",
-    )
-    parser.add_argument(
-        "--wake-prompt",
-        type=str,
-        default=WAKE_UP_PROMPT,
-        help="Custom wake-up prompt to send to Gemini",
-    )
-    parser.add_argument(
-        "--web",
-        action="store_true",
-        help="Launch browser Web UI instead of CLI",
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=8000,
-        help="Web UI port (default: 8000)",
-    )
-    args = parser.parse_args()
 
-    api_key = get_api_key(args.api_key)
-    if not api_key:
-        print("\n[-] Error: GEMINI_API_KEY is not set!")
-        print("Please either:")
-        print("  1. Set GEMINI_API_KEY at the top of main.py")
-        print("  2. Or set GEMINI_API_KEY in your .env file")
-        print("  3. Or pass --api-key <YOUR_KEY>\n")
+    args = parser.parse_args()
+    resolved_api_key = get_api_key(args.api_key)
+
+    if not resolved_api_key:
+        print("\n[!] ERROR: GEMINI_API_KEY is not set.")
+        print("    Please set GEMINI_API_KEY in your .env file or at the top of main.py.\n")
         sys.exit(1)
 
-    if args.web:
-        try:
-            from .web_ui import run_web_server
-        except (ImportError, ValueError):
-            from web_ui import run_web_server
-
-        run_web_server(
-            camera_url=args.camera,
-            api_key=api_key,
-            model=args.model,
-            fps=args.fps,
-            port=args.port,
-        )
-    else:
-        try:
-            asyncio.run(
-                run_live_call(
-                    camera_source=args.camera,
-                    api_key=api_key,
-                    model=args.model,
-                    fps=args.fps,
-                    enable_mic=(not args.no_mic) and ENABLE_MIC,
-                    enable_speaker=(not args.no_speaker) and ENABLE_SPEAKER,
-                    threshold_db=args.threshold,
-                    show_meter=(not args.no_meter) and SHOW_DECIBEL_METER,
-                    enable_wake_up_call=(not args.no_wake_up) and ENABLE_WAKE_UP_CALL,
-                    wake_up_prompt=args.wake_prompt,
-                )
+    try:
+        asyncio.run(
+            run_live_call(
+                camera_source=args.camera,
+                api_key=resolved_api_key,
+                model=args.model,
+                fps=args.fps,
+                threshold_db=args.threshold_db,
+                silence_wait_sec=args.silence_wait,
             )
-        except KeyboardInterrupt:
-            print("\nCall ended.")
+        )
+    except KeyboardInterrupt:
+        print("\n[!] Program interrupted by user.")
+    except Exception as e:
+        print(f"\n[!] Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 if __name__ == "__main__":
