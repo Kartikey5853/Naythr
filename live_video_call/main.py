@@ -90,11 +90,14 @@ if not MARVIN_MODEL_PATH.exists():
 
 # Assistant Persona
 MARVIN_SYSTEM_PROMPT = (
-    "You are Marvin, a helpful real-time AI assistant in a live video and voice call with the user. "
+    "You are Marvin, a highly perceptive real-time AI visual assistant in a live video and voice call with the user. "
     "Your name is Marvin. When asked who you are, what your name is, or to introduce yourself, always state clearly that you are Marvin. "
-    "You continuously receive real-time video frames from the user's camera and live audio from their microphone. "
-    "Prioritize immediate hazards, walkable path, left/center/right direction, obstacles, vehicles, and people. Mention the most useful information first. "
-    "Respond naturally, concisely, and directly by voice to what you see and hear, normally in one or two short sentences."
+    "You continuously receive real-time high-resolution video frames from the user's camera and live audio from their microphone. "
+    "Carefully inspect the visual details. You have high-accuracy vision and OCR: "
+    "When the user shows a note, paper, notebook, book, screen, label, sign, or currency, accurately read the exact visible text, handwriting, numbers, and content. "
+    "If asked 'what do you see' or 'read this', focus on the main subject or note in the center of the frame and read it clearly and accurately. "
+    "For navigation or walking questions, mention immediate hazards and direction. "
+    "Respond naturally, directly, and concisely by voice to what you see and hear."
 )
 
 
@@ -287,9 +290,9 @@ class GatedAudioDevice(AudioDevice):
         # STATE 3: RESPONDING (Gemini is answering)
         # --------------------------------------------------------------
         if self.state == self.STATE_RESPONDING:
-            # User barge-in check (very loud intentional interruption)
-            if self._is_speaking and db >= (self.threshold_db + 14.0):
-                self.interrupt()
+            # Microphone is completely muted to Gemini while Marvin responds
+            # to prevent speaker audio feedback or false barge-in interruptions
+            return
 
 
 async def run_live_call(
@@ -374,9 +377,10 @@ async def run_live_call(
 
     def on_interrupted():
         nonlocal gemini_is_speaking_turn
-        print("\n[Interrupted by you]")
-        gemini_is_speaking_turn = False
-        audio.set_state(GatedAudioDevice.STATE_SPEAK)
+        if gemini_is_speaking_turn:
+            print("\n[Interrupted]")
+            gemini_is_speaking_turn = False
+        audio.set_state(GatedAudioDevice.STATE_WAITING)
 
     session.on_user_speech = on_user_speech
     session.on_gemini_speech = on_gemini_speech
@@ -389,10 +393,14 @@ async def run_live_call(
         print(" >>> [TRIGGER DETECTED] \"Hey Marvin\" <<<")
         print(" [SPEAK] Listening to your question (take your time)...")
         print("=" * 50 + "\n")
-        # Send fresh camera frame immediately
+        # Send fresh high-resolution camera frame immediately for OCR and reading notes
         async def _push_fresh_frame():
             if camera and getattr(session, "_session", None) and session.is_connected:
-                fresh_jpeg = camera.get_latest_jpeg()
+                fresh_jpeg = (
+                    camera.get_high_res_jpeg(max_dim=1920, quality=95)
+                    if hasattr(camera, "get_high_res_jpeg")
+                    else camera.get_latest_jpeg()
+                )
                 if fresh_jpeg:
                     try:
                         await session._session.send_realtime_input(
@@ -407,6 +415,17 @@ async def run_live_call(
         gemini_is_speaking_turn = False
         print("\n[RESPONDING] Processing your question...")
         async def _signal_speech_end():
+            # 1. Drain any remaining chunks in the mic queue so no trailing audio is sent
+            # to the server while Gemini is already speaking (which triggers false barge-in)
+            if hasattr(session, "_mic_queue") and session._mic_queue:
+                while not session._mic_queue.empty():
+                    try:
+                        session._mic_queue.get_nowait()
+                        session._mic_queue.task_done()
+                    except Exception:
+                        break
+
+            # 2. Tell Gemini the user has stopped speaking
             if getattr(session, "_session", None) and session.is_connected:
                 try:
                     await session._session.send_realtime_input(audio_stream_end=True)

@@ -1,11 +1,13 @@
-"""Real-time camera stream grabber with dedicated frame-draining thread."""
-
+import os
 import cv2
 import logging
 import threading
 import time
 from typing import Optional, Tuple
 import numpy as np
+
+# Prevent FFmpeg / OpenCV network buffer buildup for IP streams
+os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "fflags;nobuffer|flags;low_delay|max_delay;0")
 
 try:
     from .live_config import (
@@ -51,6 +53,7 @@ class CameraStream:
         self._running = False
         self._lock = threading.Lock()
 
+        self._raw_frame: Optional[np.ndarray] = None
         self._latest_frame: Optional[np.ndarray] = None
         self._latest_jpeg: Optional[bytes] = None
         self._last_frame_time: float = 0.0
@@ -75,6 +78,8 @@ class CameraStream:
             if self._cap is None or not self._cap.isOpened():
                 try:
                     self._cap = cv2.VideoCapture(self.source)
+                    if self._cap is not None and self._cap.isOpened():
+                        self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                 except Exception as e:
                     logger.debug(f"Connection error: {e}")
 
@@ -88,6 +93,7 @@ class CameraStream:
                 jpeg_bytes = self._encode_jpeg(resized)
 
                 with self._lock:
+                    self._raw_frame = frame
                     self._latest_frame = resized
                     self._latest_jpeg = jpeg_bytes
                     self._last_frame_time = time.time()
@@ -127,6 +133,23 @@ class CameraStream:
         """Return the latest pre-encoded JPEG bytes, or None."""
         with self._lock:
             return self._latest_jpeg
+
+    def get_high_res_jpeg(self, max_dim: int = 1920, quality: int = 95) -> Optional[bytes]:
+        """Return a crystal-clear high-resolution JPEG of the latest frame for reading notes and OCR."""
+        with self._lock:
+            if self._raw_frame is None:
+                return self._latest_jpeg
+            frame = self._raw_frame.copy()
+
+        h, w = frame.shape[:2]
+        longest = max(h, w)
+        if longest > max_dim:
+            scale = max_dim / float(longest)
+            frame = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_LANCZOS4)
+
+        encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
+        success, buffer = cv2.imencode(".jpg", frame, encode_params)
+        return buffer.tobytes() if success else None
 
     def is_healthy(self, timeout_sec: float = 3.0) -> bool:
         """Check if fresh frames have been received within the timeout window."""

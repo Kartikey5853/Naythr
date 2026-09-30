@@ -39,8 +39,8 @@ IP_CAMERA_URL = os.getenv(
 
 # Streaming Parameters
 FRAME_INTERVAL_SEC = float(os.getenv("FRAME_INTERVAL_SEC", "1.0"))  # ~1 FPS
-FRAME_MAX_DIM = int(os.getenv("FRAME_MAX_DIM", "768"))              # Max 768px optimal for Gemini
-JPEG_QUALITY = int(os.getenv("JPEG_QUALITY", "80"))
+FRAME_MAX_DIM = int(os.getenv("FRAME_MAX_DIM", "1280"))              # 1280px high-definition for text & details
+JPEG_QUALITY = int(os.getenv("JPEG_QUALITY", "92"))                  # High JPEG quality for OCR & reading notes
 
 # Wake-Up Call Settings
 ENABLE_WAKE_UP_CALL = os.getenv("ENABLE_WAKE_UP_CALL", "True").lower() in ("true", "1", "yes")
