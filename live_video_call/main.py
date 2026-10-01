@@ -1,3 +1,13 @@
+import sys
+if sys.platform == "win32":
+    sys.coinit_flags = 0
+    try:
+        from bleak.backends.winrt.util import uninitialize_sta, allow_sta
+        uninitialize_sta()
+        allow_sta()
+    except Exception:
+        pass
+
 """Gemini Live Video Call - IP Camera + PC Mic/Speaker with 'Hey Marvin' Wake Word.
 
 Open this folder and run:
@@ -33,6 +43,15 @@ MIC_THRESHOLD_DB = 55.0                       # Baseline voice sensitivity thres
 SILENCE_WAIT_SECONDS = 2.8                    # Pause tolerance: wait 2.8s of quiet before ending user turn
 WAKE_THRESHOLD = 0.38                         # Confidence score threshold for "Hey Marvin" in noisy environments
 VAD_THRESHOLD = 0.35                          # Silero VAD threshold to reject non-speech ambient noise
+
+# Wearable BLE Obstacle Sensor Settings (in millimeters)
+SENSOR_TRIGGER_DISTANCE_MM = int(os.getenv("SENSOR_TRIGGER_DISTANCE_MM", "600"))  # Trigger alert when distance < 600 mm
+SENSOR_RESET_DISTANCE_MM = int(os.getenv("SENSOR_RESET_DISTANCE_MM", "800"))      # Reset alert state to NORMAL when distance > 800 mm
+SENSOR_RE_ALERT_DISTANCE_CHANGE_MM = int(os.getenv("SENSOR_RE_ALERT_DISTANCE_CHANGE_MM", "150"))  # Re-alert when distance decreases by >= 150 mm (closer)
+
+# SOS Emergency Confirmation Layer Settings
+SOS_DISTANCE_MM = int(os.getenv("SOS_DISTANCE_MM", "300"))                             # Proximity threshold for all 3 sensors (< 300 mm)
+SOS_CONFIRMATION_TIMEOUT_SECONDS = float(os.getenv("SOS_CONFIRMATION_TIMEOUT_SECONDS", "7.0"))  # Seconds to wait for user confirmation
 
 # ==============================================================================
 
@@ -72,11 +91,42 @@ try:
     from .audio_stream import AudioDevice
     from .gemini_live import GeminiLiveSession
     from .live_config import GEMINI_API_KEY as ENV_GEMINI_KEY
+    from .sos_manager import SosManager, default_trigger_sos
+    from .intents.intent_parser import IntentParser
+    from .memory.memory_manager import MemoryManager
 except (ImportError, ValueError):
     from camera_stream import CameraStream
     from audio_stream import AudioDevice
     from gemini_live import GeminiLiveSession
     from live_config import GEMINI_API_KEY as ENV_GEMINI_KEY
+    from sos_manager import SosManager, default_trigger_sos
+    try:
+        from intents.intent_parser import IntentParser
+        from memory.memory_manager import MemoryManager
+    except ImportError:
+        IntentParser = None
+        MemoryManager = None
+
+try:
+    from bluetooth_test.ble_scan import (
+        start_ble_sensor_thread,
+        run_ble_sensor_client,
+        parse_sensor_readings,
+        format_sensor_prompt,
+        SensorHysteresisManager,
+        SENSOR_TRIGGER_DISTANCE_MM as DEFAULT_TRIGGER_MM,
+        SENSOR_RESET_DISTANCE_MM as DEFAULT_RESET_MM,
+        SENSOR_RE_ALERT_DISTANCE_CHANGE_MM as DEFAULT_RE_ALERT_MM,
+    )
+except ImportError:
+    start_ble_sensor_thread = None
+    run_ble_sensor_client = None
+    parse_sensor_readings = None
+    format_sensor_prompt = None
+    SensorHysteresisManager = None
+    DEFAULT_TRIGGER_MM = 600
+    DEFAULT_RESET_MM = 800
+    DEFAULT_RE_ALERT_MM = 150
 
 # Silence verbose background logs
 logging.basicConfig(level=logging.WARNING)
@@ -97,6 +147,14 @@ MARVIN_SYSTEM_PROMPT = (
     "When the user shows a note, paper, notebook, book, screen, label, sign, or currency, accurately read the exact visible text, handwriting, numbers, and content. "
     "If asked 'what do you see' or 'read this', focus on the main subject or note in the center of the frame and read it clearly and accurately. "
     "For navigation or walking questions, mention immediate hazards and direction. "
+    "When you receive an automated '[SYSTEM SENSOR EVENT]' indicating an obstacle from wearable sensors (LEFT, CENTER, or RIGHT), "
+    "immediately assess the CURRENT LIVE CAMERA VIEW and determine what is causing the detection. "
+    "Use both the sensor direction/distance and the current camera view to identify the obstacle, and give ONE extremely short navigation instruction (approximately 5-12 words). "
+    "Examples: 'Person on your left. Move right.', 'Wall on your left. Move right.', 'Person ahead. Stop.', 'Obstacle ahead. Move left.', 'Chair on your right. Move left.'. "
+    "Prioritize immediate navigation information. Do not explain your reasoning. Do not mention the internal sensor event. "
+    "When you receive an automated '[SYSTEM SOS CHECK]', speak ONLY the exact question: 'Are you okay?'. Do not explain technical details or sensor readings. "
+    "When you receive an automated '[SYSTEM EMERGENCY SOS ACTIVATED]', immediately speak aloud to the user in a calm, clear, reassuring, and comforting voice: "
+    "confirm that emergency SOS is active, let them know emergency contacts have been notified with their live location, and advise them to remain calm. Do not read raw URL strings. "
     "Respond naturally, directly, and concisely by voice to what you see and hear."
 )
 
@@ -354,10 +412,30 @@ async def run_live_call(
         system_instruction=MARVIN_SYSTEM_PROMPT,
     )
 
-    gemini_is_speaking_turn = False
+    intent_parser = IntentParser() if IntentParser else None
+    memory_manager = MemoryManager() if MemoryManager else None
+    sos_manager: Optional[SosManager] = None
 
     def on_user_speech(transcript: str):
         print(f"\nYou (Voice) > {transcript}")
+        if sos_manager and sos_manager.state == SosManager.STATE_SOS_CHECKING:
+            async def _check_sos_voice_response():
+                handled = await sos_manager.handle_user_response(transcript)
+                if handled and sos_manager.state == SosManager.STATE_NORMAL:
+                    audio.set_state(GatedAudioDevice.STATE_WAITING)
+                elif handled and sos_manager.state == SosManager.STATE_SOS_ACTIVE:
+                    audio.set_state(GatedAudioDevice.STATE_RESPONDING)
+            asyncio.create_task(_check_sos_voice_response())
+
+        # Action + Memory Intent Extraction
+        if intent_parser and memory_manager and transcript.strip():
+            res = intent_parser.parse(transcript)
+            if res.should_store:
+                record = memory_manager.process_intent(res, source="user_voice")
+                if record:
+                    print(f"[ACTION/MEMORY] Recorded {res.category} ({res.intent}) -> ID: {record['id']}")
+                    if res.requires_clarification and res.clarification_prompt:
+                        print(f"[ACTION/MEMORY] Clarification needed: {res.clarification_prompt}")
 
     def on_gemini_speech(chunk: str):
         nonlocal gemini_is_speaking_turn
@@ -371,16 +449,26 @@ async def run_live_call(
         if gemini_is_speaking_turn:
             print("\n")
             gemini_is_speaking_turn = False
-        # Reset back to standby listening for the next trigger
-        audio.set_state(GatedAudioDevice.STATE_WAITING)
-        print('[STANDBY] Say "Hey Marvin"')
+        if sos_manager and sos_manager.state == SosManager.STATE_SOS_CHECKING:
+            audio.set_state(GatedAudioDevice.STATE_SPEAK)
+            print("[SOS] Microphone open - listening for response (say 'Yes', 'I'm okay', 'No', or 'Help')...")
+        elif sos_manager and sos_manager.state == SosManager.STATE_SOS_ACTIVE:
+            audio.set_state(GatedAudioDevice.STATE_SPEAK)
+            print("[SOS ACTIVE] Emergency mode active - Marvin is listening (speak anytime without 'Hey Marvin')...")
+        else:
+            # Reset back to standby listening for the next trigger
+            audio.set_state(GatedAudioDevice.STATE_WAITING)
+            print('[STANDBY] Say "Hey Marvin"')
 
     def on_interrupted():
         nonlocal gemini_is_speaking_turn
         if gemini_is_speaking_turn:
             print("\n[Interrupted]")
             gemini_is_speaking_turn = False
-        audio.set_state(GatedAudioDevice.STATE_WAITING)
+        if sos_manager and sos_manager.state == SosManager.STATE_SOS_ACTIVE:
+            audio.set_state(GatedAudioDevice.STATE_SPEAK)
+        else:
+            audio.set_state(GatedAudioDevice.STATE_WAITING)
 
     session.on_user_speech = on_user_speech
     session.on_gemini_speech = on_gemini_speech
@@ -434,7 +522,10 @@ async def run_live_call(
         asyncio.create_task(_signal_speech_end())
 
     def handle_speech_timeout():
-        print('[STANDBY] No speech detected after trigger. Say "Hey Marvin"')
+        if sos_manager and sos_manager.state == SosManager.STATE_SOS_ACTIVE:
+            print('[SOS ACTIVE] Still listening for user (mic remains open)...')
+        else:
+            print('[STANDBY] No speech detected after trigger. Say "Hey Marvin"')
 
     audio.on_wake_detected = handle_wake_detected
     audio.on_speech_finished = handle_speech_finished
@@ -449,18 +540,149 @@ async def run_live_call(
         camera.stop()
         return
 
+    # Wearable Bluetooth ESP32 Sensor Integration with Hysteresis & Concurrency Lock
+    sensor_send_lock = asyncio.Lock()
+    manual_hysteresis = (
+        SensorHysteresisManager(
+            trigger_distance_mm=SENSOR_TRIGGER_DISTANCE_MM,
+            reset_distance_mm=SENSOR_RESET_DISTANCE_MM,
+            re_alert_distance_change_mm=SENSOR_RE_ALERT_DISTANCE_CHANGE_MM,
+        )
+        if SensorHysteresisManager
+        else None
+    )
+
+    # 5. Initialize SOS Emergency Confirmation Manager
+    sos_manager = SosManager(
+        sos_distance_mm=SOS_DISTANCE_MM,
+        timeout_seconds=SOS_CONFIRMATION_TIMEOUT_SECONDS,
+        send_gemini_prompt=lambda p: session.send_text(p) if (getattr(session, "_session", None) and session.is_connected) else None,
+        trigger_sos_callback=default_trigger_sos,
+        unmute_mic_callback=lambda: audio.set_state(GatedAudioDevice.STATE_SPEAK),
+    )
+
+    async def handle_sensor_obstacle(direction: str, distance_mm: float = 400.0):
+        nonlocal gemini_is_speaking_turn
+
+        # If SOS is currently checking or active, suppress normal navigation obstacles
+        if sos_manager and sos_manager.state in (SosManager.STATE_SOS_CHECKING, SosManager.STATE_SOS_ACTIVE):
+            return
+
+        # Prevent multiple simultaneous Gemini sensor requests
+        if sensor_send_lock.locked():
+            return
+
+        async with sensor_send_lock:
+            dir_clean = direction.upper().strip()
+            dist_int = int(round(distance_mm))
+
+            # Required console log: [GEMINI] Sending sensor event: LEFT
+            print(f"[GEMINI] Sending sensor event: {dir_clean}")
+
+            prompt = (
+                format_sensor_prompt(dir_clean, distance_mm)
+                if format_sensor_prompt
+                else (
+                    f"[SYSTEM SENSOR EVENT]\n\n"
+                    f"The wearable's {dir_clean} sensor detected an obstacle at {dist_int} mm.\n\n"
+                    f"This is an automatic hardware event.\n"
+                    f"It was NOT spoken or typed by the user.\n\n"
+                    f"IMPORTANT:\n"
+                    f"Immediately assess the CURRENT LIVE CAMERA VIEW and determine what is causing the sensor detection.\n\n"
+                    f"Use both:\n"
+                    f"1. The sensor information:\n"
+                    f"   - direction: {dir_clean}\n"
+                    f"   - distance: {dist_int} mm\n"
+                    f"2. The latest available camera view.\n\n"
+                    f"Do not rely only on the sensor distance.\n"
+                    f"Do not assume what the object is.\n"
+                    f"Use the camera to identify it whenever possible.\n\n"
+                    f"Then give ONE extremely short navigation instruction (approximately 5-12 words).\n"
+                    f"Prioritize immediate navigation information.\n"
+                    f"Do not explain your reasoning.\n"
+                    f"Do not mention the internal sensor event."
+                )
+            )
+
+            # Ensure the existing Live session context has the absolute freshest, unbuffered camera frame
+            # at the exact moment this sensor event is processed:
+            if camera and getattr(session, "_session", None) and session.is_connected:
+                fresh_jpeg = camera.get_latest_jpeg()
+                if fresh_jpeg:
+                    try:
+                        await session._session.send_realtime_input(
+                            video=types.Blob(data=fresh_jpeg, mime_type="image/jpeg")
+                        )
+                    except Exception as e:
+                        logger.debug(f"Fresh frame send error before sensor alert: {e}")
+
+            gemini_is_speaking_turn = False
+            # Mute microphone to prevent Gemini hearing its own alert
+            audio.set_state(GatedAudioDevice.STATE_RESPONDING)
+            try:
+                await session.send_text(prompt)
+                # Required console log: [GEMINI] Sensor event sent
+                print(f"[GEMINI] Sensor event sent")
+            except Exception as e:
+                print(f"[-] Error injecting sensor event to Gemini: {e}")
+
+    # Launch background BLE sensor listener in dedicated MTA worker thread (resolves Windows COM STA issue)
+    ble_stop_event = threading.Event()
+    ble_thread = None
+    if start_ble_sensor_thread:
+        ble_thread = start_ble_sensor_thread(
+            on_sensor_trigger=handle_sensor_obstacle,
+            on_raw_reading=sos_manager.update_sensor_reading,
+            main_loop=asyncio.get_running_loop(),
+            stop_event=ble_stop_event,
+            trigger_distance_mm=SENSOR_TRIGGER_DISTANCE_MM,
+            reset_distance_mm=SENSOR_RESET_DISTANCE_MM,
+            re_alert_distance_change_mm=SENSOR_RE_ALERT_DISTANCE_CHANGE_MM,
+        )
+
+    # Background monitor loop for emergency camera black & all-sensor conditions
+    async def _sos_monitor_loop():
+        while session.is_connected:
+            try:
+                await asyncio.sleep(0.2)
+                cam_black = camera.is_black_confirmed if camera else False
+                if sos_manager:
+                    await sos_manager.poll_check(cam_black)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug(f"SOS monitor loop error: {e}")
+
+    sos_monitor_task = asyncio.create_task(_sos_monitor_loop())
+
     # Call Active Screen
     print("=" * 70)
     print(" >>> CALL IN PROGRESS <<<")
     print(" * Say \"Hey Marvin\" to speak - mic audio is gated until triggered!")
-    print(f" * Pause tolerance: {silence_wait_sec:.1f}s (you will not be cut off during pauses)")
-    print(" * Dynamic noise tracking active for crowded rooms.")
+    print(f" * Wearable BLE Obstacle Nav: Trigger < {SENSOR_TRIGGER_DISTANCE_MM}mm | Reset > {SENSOR_RESET_DISTANCE_MM}mm | Re-Alert: -{SENSOR_RE_ALERT_DISTANCE_CHANGE_MM}mm closer.")
+    print(f" * Emergency SOS Layer: Active (Camera Dark -> Confirmation {SOS_CONFIRMATION_TIMEOUT_SECONDS}s).")
+    print(" * Test fake sensor values anytime by typing:")
+    print("     - 'sensor left 400', 'sensor center 350', or 'sensor right 500'")
+    print("     - 'sensor reset' (resets hysteresis states)")
+    print("     - or raw JSON: '{\"sensor\": \"LEFT\", \"distance_mm\": 400}'")
+    print(" * SOS controls & simulations:")
+    print("     - 'sos status' (check SOS state and sensor distances)")
+    print("     - 'sos reset' (reset SOS state to NORMAL)")
+    print("     - 'sos trigger' (force immediate SOS trigger)")
+    print("     - 'sos black on/off' (simulate camera dark condition)")
+    print("     - 'sos sensors <mm>' (e.g. 'sos sensors 200' to set all sensors below threshold)")
+    print("     - 'sos test' (run automated 7-test simulation suite)")
+    print(" * Action + Memory Layer: Active (Medications, Appointments, Transport).")
+    print(" * Memory controls:")
+    print("     - 'memory status' (view memory statistics)")
+    print("     - 'memory actions' (view pending/recorded actions)")
+    print("     - 'memory medications' (view active medications)")
+    print("     - 'memory appointments' (view appointments)")
+    print("     - 'memory clear-test-data' (reset memory storage)")
+    print("     - 'test intent <query>' (test intent parsing and extraction)")
     print(" * Camera streams context continuously (~1 FPS).")
     print(" * You can also type questions below and press Enter anytime.")
     print(" * Type 'status' for stats, or 'exit' to quit.")
-    print("=" * 70 + "\n")
-    print('[STANDBY] Say "Hey Marvin"\n')
-
     loop = asyncio.get_running_loop()
 
     # Clean asynchronous keyboard input queue
@@ -497,19 +719,223 @@ async def run_live_call(
                 handle_wake_detected()
                 continue
 
+            # If SOS confirmation is currently waiting for user response, handle it
+            if sos_manager and sos_manager.state == SosManager.STATE_SOS_CHECKING:
+                handled = await sos_manager.handle_user_response(text)
+                if handled:
+                    if sos_manager.state == SosManager.STATE_NORMAL:
+                        audio.set_state(GatedAudioDevice.STATE_WAITING)
+                    elif sos_manager.state == SosManager.STATE_SOS_ACTIVE:
+                        audio.set_state(GatedAudioDevice.STATE_RESPONDING)
+                    continue
+
+            # SOS CLI control and simulation commands
+            low_text = text.lower()
+            if low_text.startswith("sos"):
+                sos_parts = low_text.split()
+                sub = sos_parts[1] if len(sos_parts) > 1 else "status"
+
+                if sub == "status":
+                    cam_b = camera.is_black_confirmed if camera else False
+                    print(f"\n--- SOS Status ---")
+                    print(f"State:            {sos_manager.state if sos_manager else 'N/A'}")
+                    print(f"Camera Dark:      {cam_b}")
+                    if sos_manager:
+                        dists = sos_manager.latest_sensor_distances
+                        print(f"Sensors:          LEFT={dists['LEFT']}mm, CENTER={dists['CENTER']}mm, RIGHT={dists['RIGHT']}mm (Mode: Camera Dark Only)")
+                    print("------------------\n")
+                    continue
+
+                elif sub == "reset":
+                    if sos_manager:
+                        sos_manager.reset()
+                    if camera:
+                        camera.set_simulated_black(False)
+                    audio.set_state(GatedAudioDevice.STATE_WAITING)
+                    print("[SOS] System reset to NORMAL. Simulated camera black cleared.")
+                    continue
+
+                elif sub == "trigger":
+                    if sos_manager:
+                        print("[SOS] Manual emergency trigger requested.")
+                        sos_manager.state = SosManager.STATE_SOS_ACTIVE
+                        audio.set_state(GatedAudioDevice.STATE_RESPONDING)
+                        await sos_manager._invoke_trigger_sos(reason="CLI manual test trigger")
+                    continue
+
+                elif sub == "black":
+                    turn_on = len(sos_parts) > 2 and sos_parts[2] in {"on", "true", "1"}
+                    if camera:
+                        camera.set_simulated_black(turn_on)
+                    print(f"[SOS] Simulated camera dark: {'ON' if turn_on else 'OFF'}")
+                    continue
+
+                elif sub == "sensors":
+                    s_val = float(sos_parts[2]) if (len(sos_parts) > 2 and sos_parts[2].replace(".", "", 1).isdigit()) else 200.0
+                    if sos_manager:
+                        sos_manager.update_sensor_reading("LEFT", s_val)
+                        sos_manager.update_sensor_reading("CENTER", s_val)
+                        sos_manager.update_sensor_reading("RIGHT", s_val)
+                    print(f"[SOS] Updated all sensors to {s_val:.0f} mm")
+                    continue
+
+                elif sub == "test":
+                    from sos_manager import run_unit_tests
+                    await run_unit_tests()
+                    continue
+
+            # Action + Memory CLI commands
+            if low_text.startswith("memory"):
+                mem_parts = low_text.split()
+                sub = mem_parts[1] if len(mem_parts) > 1 else "status"
+
+                if not memory_manager:
+                    print("[MEMORY] MemoryManager module not initialized.")
+                    continue
+
+                if sub == "status":
+                    dash = memory_manager.get_frontend_dashboard_data()
+                    print("\n--- Naythr Action & Memory Status ---")
+                    print(f"Data Directory:   {memory_manager.data_dir}")
+                    print(f"Pending Actions:  {dash['counts']['pending_actions']}")
+                    print(f"Active Meds:      {dash['counts']['medications']}")
+                    print(f"Appointments:     {dash['counts']['appointments']}")
+                    print(f"Recent Activity:  {len(dash['recent_activity'])} entries")
+                    print("-------------------------------------\n")
+                    continue
+
+                elif sub == "actions":
+                    actions = memory_manager.get_actions()
+                    print(f"\n--- Stored Actions ({len(actions)}) ---")
+                    if not actions:
+                        print(" (No actions recorded yet)")
+                    for a in actions:
+                        print(f" [{a['id']}] {a['type']} ({a['intent']}) - Status: {a['status']}")
+                        print(f"   Request:  '{a['user_request']}'")
+                        print(f"   Entities: {json.dumps(a['entities'])}")
+                    print("---------------------------------------\n")
+                    continue
+
+                elif sub == "medications":
+                    meds = memory_manager.get_medications()
+                    print(f"\n--- Active Medications ({len(meds)}) ---")
+                    if not meds:
+                        print(" (No medications recorded yet)")
+                    for m in meds:
+                        info = m['medication']
+                        print(f" [{m['id']}] {info.get('name', 'Unknown').title()} - Status: {m['status']}")
+                        print(f"   Frequency: {info.get('frequency') or 'None'} | Dosage: {info.get('dosage') or 'None'} | Duration: {info.get('duration') or 'None'}")
+                    print("----------------------------------------\n")
+                    continue
+
+                elif sub == "appointments":
+                    appts = memory_manager.get_appointments()
+                    print(f"\n--- Recorded Appointments ({len(appts)}) ---")
+                    if not appts:
+                        print(" (No appointments recorded yet)")
+                    for ap in appts:
+                        ent = ap['entities']
+                        print(f" [{ap['id']}] {ent.get('place', 'Unknown')} - Status: {ap['status']}")
+                        print(f"   Date: {ent.get('date') or 'None'} | Time: {ent.get('time') or 'None'}")
+                    print("-------------------------------------------\n")
+                    continue
+
+                elif sub in {"clear-test-data", "reset", "clear"}:
+                    memory_manager.reset_memory()
+                    print("[MEMORY] All memory files and activity history cleared.")
+                    continue
+
+            # Testing Intent Extraction CLI command
+            if low_text.startswith("test intent"):
+                query = text[11:].strip().strip('"').strip("'")
+                if not query:
+                    print("[INTENT] Please provide text to parse: test intent <text>")
+                    continue
+                if intent_parser:
+                    res = intent_parser.parse(query)
+                    print("\n--- Intent Extraction Result ---")
+                    print(f"Utterance:     '{query}'")
+                    print(f"Should Store:  {res.should_store}")
+                    print(f"Category:      {res.category}")
+                    print(f"Intent:        {res.intent}")
+                    print(f"Confidence:    {res.confidence}")
+                    print(f"Entities:      {json.dumps(res.entities, indent=2)}")
+                    print(f"Clarification: {res.requires_clarification} ({res.clarification_prompt})")
+                    print("--------------------------------\n")
+                    if res.should_store and memory_manager:
+                        rec = memory_manager.process_intent(res, source="cli_test")
+                        if rec:
+                            print(f"[MEMORY] Successfully stored record -> ID: {rec['id']}\n")
+                continue
+
+            # Sensor simulation triggers for CLI & Web Dashboard testing
+            if low_text.startswith("sensor ") or low_text in {"left", "center", "right", "front"}:
+                parts = low_text.split()
+                if len(parts) >= 2:
+                    action_dir = parts[1].upper()
+                    dist = float(parts[2]) if (len(parts) >= 3 and parts[2].replace(".", "", 1).isdigit()) else 400.0
+                else:
+                    action_dir = low_text.upper()
+                    dist = 400.0
+
+                if action_dir in {"RESET", "CLEAR"}:
+                    if manual_hysteresis:
+                        manual_hysteresis.reset_all()
+                    print("[SENSOR] All sensor alert states reset to NORMAL.")
+                    continue
+
+                if action_dir in {"LEFT", "CENTER", "RIGHT", "FRONT"}:
+                    target_dir = "CENTER" if action_dir in ("CENTER", "FRONT") else action_dir
+                    if sos_manager:
+                        sos_manager.update_sensor_reading(target_dir, dist)
+                    if manual_hysteresis:
+                        should_trigger = manual_hysteresis.process_reading(target_dir, dist)
+                        if should_trigger:
+                            await handle_sensor_obstacle(target_dir, dist)
+                    else:
+                        await handle_sensor_obstacle(target_dir, dist)
+                    continue
+
+            # Raw JSON simulation from CLI/Dashboard: e.g. {"sensor": 2, "position": "Left", "distance_mm": 123, "motor_triggered": true}
+            if text.startswith("{") and text.endswith("}"):
+                if parse_sensor_readings and manual_hysteresis:
+                    print(f"[BLE RAW] {text}")
+                    fake_readings = parse_sensor_readings(text)
+                    for d, d_dist in fake_readings.items():
+                        if sos_manager:
+                            sos_manager.update_sensor_reading(d, d_dist)
+                        if manual_hysteresis.process_reading(d, d_dist):
+                            await handle_sensor_obstacle(d, d_dist)
+                    continue
+
             if text.lower() == "status":
                 stats = camera.get_stats()
                 mic_db = audio.current_db if audio else 0.0
                 ambient = 20.0 * np.log10(max(1.0, audio.ambient_rms)) if audio else 0.0
+                mem_counts = memory_manager.get_frontend_dashboard_data()["counts"] if memory_manager else {}
                 print(f"\n--- System Status ---")
                 print(f"State:        {audio.state}")
+                print(f"SOS State:    {sos_manager.state if sos_manager else 'N/A'}")
+                print(f"Camera Dark:  {camera.is_black_confirmed if camera else False}")
+                print(f"Actions/Mem:  Pending: {mem_counts.get('pending_actions', 0)} | Meds: {mem_counts.get('medications', 0)} | Appts: {mem_counts.get('appointments', 0)}")
                 print(f"Camera:       {'Active [OK]' if stats['healthy'] else 'No Signal [!]'}")
+                print(f"BLE Client:   {'Active' if ble_thread and ble_thread.is_alive() else 'Inactive'}")
                 print(f"Frames Sent:  {session.frames_sent}")
                 print(f"Mic Level:    {mic_db:.1f} dB (Ambient Noise Floor: {ambient:.1f} dB)")
                 print(f"Pause Wait:   {silence_wait_sec:.1f}s")
                 print(f"Gemini Model: {session.model}")
                 print("---------------------\n")
                 continue
+
+            # Process intent from typed user inquiry before sending to Gemini
+            if intent_parser and memory_manager:
+                t_res = intent_parser.parse(text)
+                if t_res.should_store:
+                    t_rec = memory_manager.process_intent(t_res, source="user_typed")
+                    if t_rec:
+                        print(f"[ACTION/MEMORY] Recorded {t_res.category} ({t_res.intent}) -> ID: {t_rec['id']}")
+                        if t_res.requires_clarification and t_res.clarification_prompt:
+                            print(f"[ACTION/MEMORY] Needs info: {t_res.clarification_prompt}")
 
             # User typed a question directly
             gemini_is_speaking_turn = False
@@ -522,6 +948,10 @@ async def run_live_call(
 
     finally:
         print("\n\nEnding live call...")
+        if sos_monitor_task and not sos_monitor_task.done():
+            sos_monitor_task.cancel()
+        if ble_stop_event:
+            ble_stop_event.set()
         await session.close()
         camera.stop()
         print("Call ended. Goodbye!")

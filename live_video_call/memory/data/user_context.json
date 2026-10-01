@@ -1,0 +1,11 @@
+{
+  "frequent_places": [
+    {
+      "name": "KIMS Hospital",
+      "type": "hospital"
+    }
+  ],
+  "preferences": {
+    "preferred_ride": null
+  }
+}

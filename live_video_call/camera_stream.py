@@ -22,6 +22,11 @@ except (ImportError, ValueError):
         JPEG_QUALITY,
     )
 
+try:
+    from .sos_manager import CameraBlackDetector
+except (ImportError, ValueError):
+    from sos_manager import CameraBlackDetector
+
 logger = logging.getLogger("CameraStream")
 
 
@@ -58,6 +63,7 @@ class CameraStream:
         self._latest_jpeg: Optional[bytes] = None
         self._last_frame_time: float = 0.0
         self._frame_count: int = 0
+        self._black_detector = CameraBlackDetector()
 
     def start(self) -> bool:
         """Start capturing from the camera source in a background thread."""
@@ -83,12 +89,15 @@ class CameraStream:
                 except Exception as e:
                     logger.debug(f"Connection error: {e}")
 
-                if self._cap is None or not self._cap.isOpened():
-                    time.sleep(reconnect_delay)
-                    continue
+            if self._cap is None or not self._cap.isOpened():
+                time.sleep(reconnect_delay)
+                continue
 
             success, frame = self._cap.read()
             if success and frame is not None:
+                # Update local camera-black confirmation detector on instantaneous frame
+                self._black_detector.process_frame(frame)
+
                 resized = self._resize_if_needed(frame)
                 jpeg_bytes = self._encode_jpeg(resized)
 
@@ -157,6 +166,15 @@ class CameraStream:
             if self._latest_frame is None:
                 return False
             return (time.time() - self._last_frame_time) < timeout_sec
+
+    @property
+    def is_black_confirmed(self) -> bool:
+        """Return True if sustained black/dark camera frames have been confirmed."""
+        return self._black_detector.is_confirmed_black
+
+    def set_simulated_black(self, simulated: Optional[bool]):
+        """Manually override camera black state for safe unit/integration testing."""
+        self._black_detector.set_simulation(simulated)
 
     def get_stats(self) -> dict:
         """Get operational status and stats."""
