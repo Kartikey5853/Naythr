@@ -1,0 +1,5 @@
+﻿.env
+**/.env
+live_video_call/.env
+__pycache__/
+*.py[cod]

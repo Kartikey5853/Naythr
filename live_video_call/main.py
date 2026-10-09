@@ -20,12 +20,28 @@ Open this folder and run:
 
 # IP Camera URL (e.g. "http://192.168.1.4:8080/video", "rtsp://...", or "0" for webcam)
 import os
+from pathlib import Path
+
+def _load_env_files():
+    for p in [Path(__file__).resolve().parent / ".env", Path(__file__).resolve().parent.parent / ".env"]:
+        if p.is_file():
+            try:
+                for line in p.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        os.environ[k.strip()] = v.strip().strip('"').strip("'")
+            except Exception:
+                pass
+_load_env_files()
+
 CAMERA_URL = os.getenv(
     "CAMERA_URL",
     os.getenv("IP_CAMERA_URL", "http://10.10.10.128:8080/video"),
 )
 
 # Gemini API Key (leave empty "" to automatically load from .env in the project)
+GEMINI_API_KEY = ""
 
 
 # Live Model & Frame Rate
@@ -40,7 +56,7 @@ WAKE_UP_PROMPT = "Wake up call: Greet the user in one short sentence as Marvin a
 ENABLE_MIC = True                             # Enable PC microphone
 ENABLE_SPEAKER = True                         # Enable PC speaker audio output
 MIC_THRESHOLD_DB = 55.0                       # Baseline voice sensitivity threshold in dB
-SILENCE_WAIT_SECONDS = 2.8                    # Pause tolerance: wait 2.8s of quiet before ending user turn
+SILENCE_WAIT_SECONDS = 1.4                    # Pause tolerance: wait 1.4s of quiet before ending user turn
 WAKE_THRESHOLD = 0.38                         # Confidence score threshold for "Hey Marvin" in noisy environments
 VAD_THRESHOLD = 0.35                          # Silero VAD threshold to reject non-speech ambient noise
 
@@ -51,7 +67,7 @@ SENSOR_RE_ALERT_DISTANCE_CHANGE_MM = int(os.getenv("SENSOR_RE_ALERT_DISTANCE_CHA
 
 # SOS Emergency Confirmation Layer Settings
 SOS_DISTANCE_MM = int(os.getenv("SOS_DISTANCE_MM", "300"))                             # Proximity threshold for all 3 sensors (< 300 mm)
-SOS_CONFIRMATION_TIMEOUT_SECONDS = float(os.getenv("SOS_CONFIRMATION_TIMEOUT_SECONDS", "7.0"))  # Seconds to wait for user confirmation
+SOS_CONFIRMATION_TIMEOUT_SECONDS = float(os.getenv("SOS_CONFIRMATION_TIMEOUT_SECONDS", "30.0"))  # Seconds to wait for user confirmation
 
 # ==============================================================================
 
@@ -94,6 +110,8 @@ try:
     from .sos_manager import SosManager, default_trigger_sos
     from .intents.intent_parser import IntentParser
     from .memory.memory_manager import MemoryManager
+    from .memory.ride_manager import RideConversationManager, print_ride_request_summary
+    from .memory.call_manager import CallConversationManager, print_phone_call_summary
 except (ImportError, ValueError):
     from camera_stream import CameraStream
     from audio_stream import AudioDevice
@@ -103,9 +121,15 @@ except (ImportError, ValueError):
     try:
         from intents.intent_parser import IntentParser
         from memory.memory_manager import MemoryManager
+        from memory.ride_manager import RideConversationManager, print_ride_request_summary
+        from memory.call_manager import CallConversationManager, print_phone_call_summary
     except ImportError:
         IntentParser = None
         MemoryManager = None
+        RideConversationManager = None
+        CallConversationManager = None
+        print_ride_request_summary = None
+        print_phone_call_summary = None
 
 try:
     from bluetooth_test.ble_scan import (
@@ -155,6 +179,11 @@ MARVIN_SYSTEM_PROMPT = (
     "When you receive an automated '[SYSTEM SOS CHECK]', speak ONLY the exact question: 'Are you okay?'. Do not explain technical details or sensor readings. "
     "When you receive an automated '[SYSTEM EMERGENCY SOS ACTIVATED]', immediately speak aloud to the user in a calm, clear, reassuring, and comforting voice: "
     "confirm that emergency SOS is active, let them know emergency contacts have been notified with their live location, and advise them to remain calm. Do not read raw URL strings. "
+    "When you receive an automated '[SYSTEM DIALOGUE PROMPT]', immediately speak aloud ONLY the exact question or confirmation to the user. Do not comment on camera objects or add unrelated chatter. "
+    "CRITICAL PHONE CALL RULES: You NEVER place phone calls yourself. All phone calls are strictly executed by the external Android phone dialer system. "
+    "NEVER say 'I am placing the call now', 'Calling now', 'Dialing now', or confirm a call on your own. "
+    "When the user asks to make a call or answers a call confirmation, say NOTHING on your own. Wait completely for the [SYSTEM DIALOGUE PROMPT]. "
+    "If a call fails or permissions are missing, speak ONLY the error message from the [SYSTEM DIALOGUE PROMPT]. Never claim a call is being placed if it failed. "
     "Respond naturally, directly, and concisely by voice to what you see and hear."
 )
 
@@ -246,6 +275,7 @@ class GatedAudioDevice(AudioDevice):
         self.user_has_spoken = False
         self.last_speech_time: Optional[float] = None
         self.speak_start_time: Optional[float] = None
+        self._preroll: list = []
 
         # Dynamic ambient noise floor tracking (exponential moving average)
         self.ambient_rms: float = 80.0
@@ -256,12 +286,14 @@ class GatedAudioDevice(AudioDevice):
         self.on_speech_finished: Optional[Callable[[], None]] = None
         self.on_speech_timeout: Optional[Callable[[], None]] = None
         self.on_state_change: Optional[Callable[[str], None]] = None
+        self.sos_manager = None
 
     def set_state(self, new_state: str):
         """Thread-safe state change."""
         if self.state == new_state:
             return
         self.state = new_state
+        self._preroll.clear()
         if new_state == self.STATE_SPEAK:
             self.user_has_spoken = False
             self.last_speech_time = None
@@ -315,33 +347,55 @@ class GatedAudioDevice(AudioDevice):
         if self.state == self.STATE_SPEAK:
             now = time.time()
 
-            # Stream audio chunk to Gemini Live
-            if self._loop and self._in_queue and not self._loop.is_closed():
-                try:
-                    self._loop.call_soon_threadsafe(self._in_queue.put_nowait, chunk_bytes)
-                except Exception:
-                    pass
-
             # Voice activity check with adaptive threshold
             if is_speech_active:
-                self.user_has_spoken = True
+                if not self.user_has_spoken:
+                    self.user_has_spoken = True
+                    # Flush pre-roll buffer so the start of words is preserved
+                    if self._loop and self._in_queue and not self._loop.is_closed():
+                        for pre_chunk in self._preroll:
+                            try:
+                                self._loop.call_soon_threadsafe(self._in_queue.put_nowait, pre_chunk)
+                            except Exception:
+                                pass
+                        self._preroll.clear()
                 self.last_speech_time = now
 
-            if self.user_has_spoken and self.last_speech_time:
-                silence_duration = now - self.last_speech_time
-                # Only end turn after generous pause (2.8s) of quiet
-                if silence_duration >= self.silence_wait_sec or (
-                    self.speak_start_time and (now - self.speak_start_time) >= self.max_speak_duration
-                ):
-                    self.set_state(self.STATE_RESPONDING)
-                    if self._loop and self.on_speech_finished and not self._loop.is_closed():
-                        self._loop.call_soon_threadsafe(self.on_speech_finished)
+            if self.user_has_spoken:
+                # Stream chunk to Gemini Live only once speech has actually started
+                if self._loop and self._in_queue and not self._loop.is_closed():
+                    try:
+                        self._loop.call_soon_threadsafe(self._in_queue.put_nowait, chunk_bytes)
+                    except Exception:
+                        pass
+
+                if self.last_speech_time:
+                    silence_duration = now - self.last_speech_time
+                    # Only end turn after generous pause (2.8s) of quiet
+                    if silence_duration >= self.silence_wait_sec or (
+                        self.speak_start_time and (now - self.speak_start_time) >= self.max_speak_duration
+                    ):
+                        self.set_state(self.STATE_RESPONDING)
+                        if self._loop and self.on_speech_finished and not self._loop.is_closed():
+                            self._loop.call_soon_threadsafe(self.on_speech_finished)
             else:
-                # Trigger fired but user did not speak within timeout window
-                if self.speak_start_time and (now - self.speak_start_time) >= self.no_speech_timeout:
-                    self.set_state(self.STATE_WAITING)
-                    if self._loop and self.on_speech_timeout and not self._loop.is_closed():
-                        self._loop.call_soon_threadsafe(self.on_speech_timeout)
+                # User has not spoken yet: store small pre-roll buffer (max 3 chunks ~240ms)
+                self._preroll.append(chunk_bytes)
+                if len(self._preroll) > 3:
+                    self._preroll.pop(0)
+
+                # Trigger fired but user did not speak within timeout window -> silent return to standby
+                # Do NOT timeout if SOS is waiting for user confirmation!
+                is_sos_active = (
+                    self.sos_manager is not None
+                    and getattr(self.sos_manager, "state", None) in ("SOS_CHECKING", "SOS_ACTIVE")
+                )
+                if not is_sos_active:
+                    if self.speak_start_time and (now - self.speak_start_time) >= self.no_speech_timeout:
+                        self._preroll.clear()
+                        self.set_state(self.STATE_WAITING)
+                        if self._loop and self.on_speech_timeout and not self._loop.is_closed():
+                            self._loop.call_soon_threadsafe(self.on_speech_timeout)
             return
 
         # --------------------------------------------------------------
@@ -416,7 +470,30 @@ async def run_live_call(
     memory_manager = MemoryManager() if MemoryManager else None
     sos_manager: Optional[SosManager] = None
 
+    call_manager = (
+        CallConversationManager(
+            memory_manager=memory_manager,
+            send_prompt_func=lambda p: session.send_text(p) if (getattr(session, "_session", None) and session.is_connected) else None,
+        )
+        if CallConversationManager
+        else None
+    )
+    ride_manager = (
+        RideConversationManager(
+            memory_manager=memory_manager,
+            send_prompt_func=lambda p: session.send_text(p) if (getattr(session, "_session", None) and session.is_connected) else None,
+        )
+        if RideConversationManager
+        else None
+    )
+
+    gemini_is_speaking_turn = False
+    suppress_gemini_turn = False
+    last_handled_speech = ""
+    last_handled_time = 0.0
+
     def on_user_speech(transcript: str):
+        nonlocal suppress_gemini_turn, last_handled_speech, last_handled_time
         print(f"\nYou (Voice) > {transcript}")
         if sos_manager and sos_manager.state == SosManager.STATE_SOS_CHECKING:
             async def _check_sos_voice_response():
@@ -427,25 +504,80 @@ async def run_live_call(
                     audio.set_state(GatedAudioDevice.STATE_RESPONDING)
             asyncio.create_task(_check_sos_voice_response())
 
+        # Check active multi-turn dialogues first (with deduplication)
+        now = time.time()
+        clean_text = transcript.strip().lower()
+
+        if call_manager and call_manager.is_active:
+            if clean_text == last_handled_speech and (now - last_handled_time) < 2.5:
+                return
+            last_handled_speech = clean_text
+            last_handled_time = now
+
+            # Silence spontaneous Gemini model audio so it does not contradict dialer outcome
+            if audio:
+                audio.interrupt()
+            suppress_gemini_turn = True
+            session.suppress_audio_output = True
+
+            async def _handle_call_voice():
+                nonlocal suppress_gemini_turn
+                try:
+                    await call_manager.handle_user_turn(transcript)
+                finally:
+                    await asyncio.sleep(0.4)
+                    suppress_gemini_turn = False
+                    session.suppress_audio_output = False
+            asyncio.create_task(_handle_call_voice())
+            return
+
+        if ride_manager and ride_manager.is_active:
+            if clean_text == last_handled_speech and (now - last_handled_time) < 2.5:
+                return
+            last_handled_speech = clean_text
+            last_handled_time = now
+
+            async def _handle_ride_voice():
+                await ride_manager.handle_user_turn(transcript)
+            asyncio.create_task(_handle_ride_voice())
+            return
+
         # Action + Memory Intent Extraction
-        if intent_parser and memory_manager and transcript.strip():
+        if intent_parser and transcript.strip():
             res = intent_parser.parse(transcript)
             if res.should_store:
-                record = memory_manager.process_intent(res, source="user_voice")
-                if record:
-                    print(f"[ACTION/MEMORY] Recorded {res.category} ({res.intent}) -> ID: {record['id']}")
-                    if res.requires_clarification and res.clarification_prompt:
-                        print(f"[ACTION/MEMORY] Clarification needed: {res.clarification_prompt}")
+                if res.category == "COMMUNICATION" and call_manager:
+                    async def _start_call_voice():
+                        await call_manager.start_call_request(res)
+                    asyncio.create_task(_start_call_voice())
+                    return
+
+                if res.category == "TRANSPORT" and res.intent == "BOOK_RIDE" and ride_manager:
+                    async def _start_ride_voice():
+                        await ride_manager.start_ride_request(res)
+                    asyncio.create_task(_start_ride_voice())
+                    return
+
+                if memory_manager:
+                    record = memory_manager.process_intent(res, source="user_voice")
+                    if record:
+                        print(f"[ACTION/MEMORY] Recorded {res.category} ({res.intent}) -> ID: {record['id']}")
+                        if res.requires_clarification and res.clarification_prompt:
+                            print(f"[ACTION/MEMORY] Clarification needed: {res.clarification_prompt}")
 
     def on_gemini_speech(chunk: str):
-        nonlocal gemini_is_speaking_turn
+        nonlocal gemini_is_speaking_turn, suppress_gemini_turn
+        if suppress_gemini_turn:
+            return
         if not gemini_is_speaking_turn:
             print("\nMarvin > ", end="", flush=True)
             gemini_is_speaking_turn = True
         print(chunk, end="", flush=True)
 
     def on_turn_complete():
-        nonlocal gemini_is_speaking_turn
+        nonlocal gemini_is_speaking_turn, suppress_gemini_turn
+        suppress_gemini_turn = False
+        session.suppress_audio_output = False
         if gemini_is_speaking_turn:
             print("\n")
             gemini_is_speaking_turn = False
@@ -455,6 +587,12 @@ async def run_live_call(
         elif sos_manager and sos_manager.state == SosManager.STATE_SOS_ACTIVE:
             audio.set_state(GatedAudioDevice.STATE_SPEAK)
             print("[SOS ACTIVE] Emergency mode active - Marvin is listening (speak anytime without 'Hey Marvin')...")
+        elif call_manager and call_manager.is_active:
+            audio.set_state(GatedAudioDevice.STATE_SPEAK)
+            print("[CALL CONFIRMATION] Microphone open - listening for confirmation (say 'Yes' or 'No')...")
+        elif ride_manager and ride_manager.is_active:
+            audio.set_state(GatedAudioDevice.STATE_SPEAK)
+            print("[RIDE] Microphone open - listening for location...")
         else:
             # Reset back to standby listening for the next trigger
             audio.set_state(GatedAudioDevice.STATE_WAITING)
@@ -466,6 +604,10 @@ async def run_live_call(
             print("\n[Interrupted]")
             gemini_is_speaking_turn = False
         if sos_manager and sos_manager.state == SosManager.STATE_SOS_ACTIVE:
+            audio.set_state(GatedAudioDevice.STATE_SPEAK)
+        elif call_manager and call_manager.is_active:
+            audio.set_state(GatedAudioDevice.STATE_SPEAK)
+        elif ride_manager and ride_manager.is_active:
             audio.set_state(GatedAudioDevice.STATE_SPEAK)
         else:
             audio.set_state(GatedAudioDevice.STATE_WAITING)
@@ -485,7 +627,7 @@ async def run_live_call(
         async def _push_fresh_frame():
             if camera and getattr(session, "_session", None) and session.is_connected:
                 fresh_jpeg = (
-                    camera.get_high_res_jpeg(max_dim=1920, quality=95)
+                    camera.get_high_res_jpeg(max_dim=1024, quality=80)
                     if hasattr(camera, "get_high_res_jpeg")
                     else camera.get_latest_jpeg()
                 )
@@ -522,10 +664,30 @@ async def run_live_call(
         asyncio.create_task(_signal_speech_end())
 
     def handle_speech_timeout():
-        if sos_manager and sos_manager.state == SosManager.STATE_SOS_ACTIVE:
-            print('[SOS ACTIVE] Still listening for user (mic remains open)...')
-        else:
-            print('[STANDBY] No speech detected after trigger. Say "Hey Marvin"')
+        if sos_manager and sos_manager.state in (SosManager.STATE_SOS_CHECKING, SosManager.STATE_SOS_ACTIVE):
+            print(f'[{sos_manager.state}] Still listening for user response (mic remains open)...')
+            return
+        if call_manager and call_manager.is_active:
+            print('[CALL CONFIRMATION] Still listening for your answer (say "Yes" or "No")...')
+            return
+        if ride_manager and ride_manager.is_active:
+            print('[RIDE] Still listening for location...')
+            return
+        print('[STANDBY] No speech detected after trigger. Say "Hey Marvin"')
+        if getattr(session, "_mic_queue", None):
+            while not session._mic_queue.empty():
+                try:
+                    session._mic_queue.get_nowait()
+                    session._mic_queue.task_done()
+                except Exception:
+                    break
+        if getattr(session, "_session", None) and session.is_connected:
+            async def _send_timeout_end():
+                try:
+                    await session._session.send_realtime_input(audio_stream_end=True)
+                except Exception:
+                    pass
+            asyncio.create_task(_send_timeout_end())
 
     audio.on_wake_detected = handle_wake_detected
     audio.on_speech_finished = handle_speech_finished
@@ -547,6 +709,7 @@ async def run_live_call(
             trigger_distance_mm=SENSOR_TRIGGER_DISTANCE_MM,
             reset_distance_mm=SENSOR_RESET_DISTANCE_MM,
             re_alert_distance_change_mm=SENSOR_RE_ALERT_DISTANCE_CHANGE_MM,
+            quiet=True,
         )
         if SensorHysteresisManager
         else None
@@ -560,9 +723,23 @@ async def run_live_call(
         trigger_sos_callback=default_trigger_sos,
         unmute_mic_callback=lambda: audio.set_state(GatedAudioDevice.STATE_SPEAK),
     )
+    audio.sos_manager = sos_manager
+
+    last_center_trigger_time = 0.0
+    CENTER_COOLDOWN_SEC = 10.0
 
     async def handle_sensor_obstacle(direction: str, distance_mm: float = 400.0):
-        nonlocal gemini_is_speaking_turn
+        nonlocal gemini_is_speaking_turn, last_center_trigger_time
+
+        dir_clean = direction.upper().strip()
+        # ONLY CENTER / FRONT sensor can trigger Gemini navigation/obstacle alerts
+        if dir_clean not in ("CENTER", "FRONT"):
+            return
+
+        now = time.time()
+        # Enforce 10-second cooldown between CENTER obstacle triggers
+        if (now - last_center_trigger_time) < CENTER_COOLDOWN_SEC:
+            return
 
         # If SOS is currently checking or active, suppress normal navigation obstacles
         if sos_manager and sos_manager.state in (SosManager.STATE_SOS_CHECKING, SosManager.STATE_SOS_ACTIVE):
@@ -573,11 +750,11 @@ async def run_live_call(
             return
 
         async with sensor_send_lock:
+            last_center_trigger_time = time.time()
             dir_clean = direction.upper().strip()
             dist_int = int(round(distance_mm))
 
-            # Required console log: [GEMINI] Sending sensor event: LEFT
-            print(f"[GEMINI] Sending sensor event: {dir_clean}")
+            logger.debug(f"[GEMINI] Sending sensor event: {dir_clean}")
 
             prompt = (
                 format_sensor_prompt(dir_clean, distance_mm)
@@ -621,8 +798,7 @@ async def run_live_call(
             audio.set_state(GatedAudioDevice.STATE_RESPONDING)
             try:
                 await session.send_text(prompt)
-                # Required console log: [GEMINI] Sensor event sent
-                print(f"[GEMINI] Sensor event sent")
+                logger.debug(f"[GEMINI] Sensor event sent")
             except Exception as e:
                 print(f"[-] Error injecting sensor event to Gemini: {e}")
 
@@ -638,6 +814,7 @@ async def run_live_call(
             trigger_distance_mm=SENSOR_TRIGGER_DISTANCE_MM,
             reset_distance_mm=SENSOR_RESET_DISTANCE_MM,
             re_alert_distance_change_mm=SENSOR_RE_ALERT_DISTANCE_CHANGE_MM,
+            quiet=True,
         )
 
     # Background monitor loop for emergency camera black & all-sensor conditions
@@ -672,7 +849,8 @@ async def run_live_call(
     print("     - 'sos black on/off' (simulate camera dark condition)")
     print("     - 'sos sensors <mm>' (e.g. 'sos sensors 200' to set all sensors below threshold)")
     print("     - 'sos test' (run automated 7-test simulation suite)")
-    print(" * Action + Memory Layer: Active (Medications, Appointments, Transport).")
+    print(" * Action + Memory Layer: Active (Medications, Appointments, Transport, Phone Calls).")
+    print(" * Voice Calling: Say 'call Mom', 'call John', or type 'contacts' to view numbers.")
     print(" * Memory controls:")
     print("     - 'memory status' (view memory statistics)")
     print("     - 'memory actions' (view pending/recorded actions)")
@@ -728,6 +906,25 @@ async def run_live_call(
                     elif sos_manager.state == SosManager.STATE_SOS_ACTIVE:
                         audio.set_state(GatedAudioDevice.STATE_RESPONDING)
                     continue
+
+            # If Phone Call confirmation is waiting for user response, handle it
+            if call_manager and call_manager.is_active:
+                await call_manager.handle_user_turn(text)
+                continue
+
+            # If Ride confirmation is waiting for user response, handle it
+            if ride_manager and ride_manager.is_active:
+                await ride_manager.handle_user_turn(text)
+                continue
+
+            # Contact book CLI command
+            if text.lower() == "contacts":
+                if call_manager:
+                    print("\n--- Naythr Contact Book ---")
+                    for k, info in call_manager.contacts.items():
+                        print(f" * {info.get('name', k.title())}: {info.get('phone')} ({info.get('relation', 'contact')})")
+                    print("---------------------------\n")
+                continue
 
             # SOS CLI control and simulation commands
             low_text = text.lower()
@@ -888,24 +1085,27 @@ async def run_live_call(
                     target_dir = "CENTER" if action_dir in ("CENTER", "FRONT") else action_dir
                     if sos_manager:
                         sos_manager.update_sensor_reading(target_dir, dist)
-                    if manual_hysteresis:
-                        should_trigger = manual_hysteresis.process_reading(target_dir, dist)
-                        if should_trigger:
+                    if target_dir == "CENTER":
+                        if manual_hysteresis:
+                            should_trigger = manual_hysteresis.process_reading(target_dir, dist)
+                            if should_trigger:
+                                await handle_sensor_obstacle(target_dir, dist)
+                        else:
                             await handle_sensor_obstacle(target_dir, dist)
                     else:
-                        await handle_sensor_obstacle(target_dir, dist)
+                        print(f"[SENSOR] {target_dir} reading updated ({int(dist)} mm), no navigation trigger (CENTER only).")
                     continue
 
             # Raw JSON simulation from CLI/Dashboard: e.g. {"sensor": 2, "position": "Left", "distance_mm": 123, "motor_triggered": true}
             if text.startswith("{") and text.endswith("}"):
                 if parse_sensor_readings and manual_hysteresis:
-                    print(f"[BLE RAW] {text}")
                     fake_readings = parse_sensor_readings(text)
                     for d, d_dist in fake_readings.items():
                         if sos_manager:
                             sos_manager.update_sensor_reading(d, d_dist)
-                        if manual_hysteresis.process_reading(d, d_dist):
-                            await handle_sensor_obstacle(d, d_dist)
+                        if d.upper() in ("CENTER", "FRONT"):
+                            if manual_hysteresis.process_reading(d, d_dist):
+                                await handle_sensor_obstacle(d, d_dist)
                     continue
 
             if text.lower() == "status":
@@ -928,14 +1128,21 @@ async def run_live_call(
                 continue
 
             # Process intent from typed user inquiry before sending to Gemini
-            if intent_parser and memory_manager:
+            if intent_parser:
                 t_res = intent_parser.parse(text)
                 if t_res.should_store:
-                    t_rec = memory_manager.process_intent(t_res, source="user_typed")
-                    if t_rec:
-                        print(f"[ACTION/MEMORY] Recorded {t_res.category} ({t_res.intent}) -> ID: {t_rec['id']}")
-                        if t_res.requires_clarification and t_res.clarification_prompt:
-                            print(f"[ACTION/MEMORY] Needs info: {t_res.clarification_prompt}")
+                    if t_res.category == "COMMUNICATION" and call_manager:
+                        await call_manager.start_call_request(t_res)
+                        continue
+                    if t_res.category == "TRANSPORT" and t_res.intent == "BOOK_RIDE" and ride_manager:
+                        await ride_manager.start_ride_request(t_res)
+                        continue
+                    if memory_manager:
+                        t_rec = memory_manager.process_intent(t_res, source="user_typed")
+                        if t_rec:
+                            print(f"[ACTION/MEMORY] Recorded {t_res.category} ({t_res.intent}) -> ID: {t_rec['id']}")
+                            if t_res.requires_clarification and t_res.clarification_prompt:
+                                print(f"[ACTION/MEMORY] Needs info: {t_res.clarification_prompt}")
 
             # User typed a question directly
             gemini_is_speaking_turn = False

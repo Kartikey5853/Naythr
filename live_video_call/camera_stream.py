@@ -108,6 +108,9 @@ class CameraStream:
                     self._last_frame_time = time.time()
                     self._frame_count += 1
             else:
+                # If camera feed drops after being active, report stream drop (camera blackout)
+                if self._frame_count > 5 and self._last_frame_time > 0 and (time.time() - self._last_frame_time) > 1.5:
+                    self._black_detector.report_stream_drop()
                 # Brief sleep if frame couldn't be read
                 time.sleep(0.05)
 

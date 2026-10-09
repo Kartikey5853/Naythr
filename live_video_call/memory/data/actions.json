@@ -1,1 +1,938 @@
-[]
+[
+  {
+    "id": "act_20261001_07fc28",
+    "timestamp": "2026-10-01T07:42:44.537576",
+    "type": "TRANSPORT",
+    "intent": "BOOK_RIDE",
+    "status": "PENDING_CONFIRMATION",
+    "user_request": "Book a ride for me.",
+    "entities": {
+      "vehicle": "ride",
+      "pickup": "College",
+      "destination": "KIMS Hospital",
+      "destination_type": "hospital",
+      "requested_time": null
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "user_voice",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261001_dbe24d",
+    "timestamp": "2026-10-01T07:42:44.563404",
+    "type": "TRANSPORT",
+    "intent": "BOOK_RIDE",
+    "status": "PENDING_CONFIRMATION",
+    "user_request": "Book me a bike from College to KIMS Hospital.",
+    "entities": {
+      "vehicle": "bike",
+      "pickup": "College",
+      "destination": "KIMS Hospital",
+      "destination_type": "hospital",
+      "requested_time": null
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "user_voice",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261001_a71650",
+    "timestamp": "2026-10-01T07:51:35.171088",
+    "type": "TRANSPORT",
+    "intent": "BOOK_RIDE",
+    "status": "PENDING_CONFIRMATION",
+    "user_request": "Book a ride for me.",
+    "entities": {
+      "vehicle": "ride",
+      "pickup": "College",
+      "destination": "KIMS Hospital",
+      "destination_type": "hospital",
+      "requested_time": null
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "user_voice",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261001_99aa9d",
+    "timestamp": "2026-10-01T07:51:35.236228",
+    "type": "TRANSPORT",
+    "intent": "BOOK_RIDE",
+    "status": "PENDING_CONFIRMATION",
+    "user_request": "Book me a bike from College to KIMS Hospital.",
+    "entities": {
+      "vehicle": "bike",
+      "pickup": "College",
+      "destination": "KIMS Hospital",
+      "destination_type": "hospital",
+      "requested_time": null
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "user_voice",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261001_d67386",
+    "timestamp": "2026-10-01T08:48:58.347702",
+    "type": "TRANSPORT",
+    "intent": "BOOK_RIDE",
+    "status": "PENDING_CONFIRMATION",
+    "user_request": "Book a ride for me.",
+    "entities": {
+      "vehicle": "ride",
+      "pickup": "College",
+      "destination": "KIMS Hospital",
+      "destination_type": "hospital",
+      "requested_time": null
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "user_voice",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261001_3a7a5c",
+    "timestamp": "2026-10-01T08:48:58.430305",
+    "type": "TRANSPORT",
+    "intent": "BOOK_RIDE",
+    "status": "PENDING_CONFIRMATION",
+    "user_request": "Book me a bike from College to KIMS Hospital.",
+    "entities": {
+      "vehicle": "bike",
+      "pickup": "College",
+      "destination": "KIMS Hospital",
+      "destination_type": "hospital",
+      "requested_time": null
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "user_voice",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261001_ae75db",
+    "timestamp": "2026-10-01T08:51:29.586375",
+    "type": "TRANSPORT",
+    "intent": "BOOK_RIDE",
+    "status": "PENDING_CONFIRMATION",
+    "user_request": "Book a ride for me.",
+    "entities": {
+      "vehicle": "ride",
+      "pickup": "College",
+      "destination": "KIMS Hospital",
+      "destination_type": "hospital",
+      "requested_time": null
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "user_voice",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261001_8c0600",
+    "timestamp": "2026-10-01T08:51:29.706084",
+    "type": "TRANSPORT",
+    "intent": "BOOK_RIDE",
+    "status": "PENDING_CONFIRMATION",
+    "user_request": "Book me a bike from College to KIMS Hospital.",
+    "entities": {
+      "vehicle": "bike",
+      "pickup": "College",
+      "destination": "KIMS Hospital",
+      "destination_type": "hospital",
+      "requested_time": null
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "user_voice",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_84673d",
+    "timestamp": "2026-10-09T10:51:50.485756",
+    "type": "TRANSPORT",
+    "intent": "BOOK_RIDE",
+    "status": "PENDING_CONFIRMATION",
+    "user_request": "Book a ride for me.",
+    "entities": {
+      "vehicle": "ride",
+      "pickup": "College",
+      "destination": "KIMS Hospital",
+      "destination_type": "hospital",
+      "requested_time": null
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "user_voice",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_83f454",
+    "timestamp": "2026-10-09T10:51:50.540721",
+    "type": "TRANSPORT",
+    "intent": "BOOK_RIDE",
+    "status": "PENDING_CONFIRMATION",
+    "user_request": "Book me a bike from College to KIMS Hospital.",
+    "entities": {
+      "vehicle": "bike",
+      "pickup": "College",
+      "destination": "KIMS Hospital",
+      "destination_type": "hospital",
+      "requested_time": null
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "user_voice",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_128fe1",
+    "timestamp": "2026-10-09T11:04:13.036308",
+    "type": "TRANSPORT",
+    "intent": "BOOK_RIDE",
+    "status": "PENDING_CONFIRMATION",
+    "user_request": "Book a ride for me.",
+    "entities": {
+      "vehicle": "ride",
+      "pickup": "College",
+      "destination": "KIMS Hospital",
+      "destination_type": "hospital",
+      "requested_time": null
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "user_voice",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_0b57bb",
+    "timestamp": "2026-10-09T11:04:13.049085",
+    "type": "TRANSPORT",
+    "intent": "BOOK_RIDE",
+    "status": "PENDING_CONFIRMATION",
+    "user_request": "Book me a bike from College to KIMS Hospital.",
+    "entities": {
+      "vehicle": "bike",
+      "pickup": "College",
+      "destination": "KIMS Hospital",
+      "destination_type": "hospital",
+      "requested_time": null
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "user_voice",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_b2b9b2",
+    "timestamp": "2026-10-09T11:11:04.609884",
+    "type": "COMMUNICATION",
+    "intent": "MAKE_PHONE_CALL",
+    "status": "CONFIRMED",
+    "user_request": "Call Rohit.",
+    "entities": {
+      "contact": "Rohit",
+      "phone": "+91 9701350218",
+      "status": "CONFIRMED"
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "voice_dialogue",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_61fd79",
+    "timestamp": "2026-10-09T11:12:31.775688",
+    "type": "COMMUNICATION",
+    "intent": "MAKE_PHONE_CALL",
+    "status": "CONFIRMED",
+    "user_request": "Can you call Raj?",
+    "entities": {
+      "contact": "Raj",
+      "phone": "9347321258",
+      "status": "CONFIRMED"
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "voice_dialogue",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_1e340e",
+    "timestamp": "2026-10-09T11:30:20.895796",
+    "type": "TRANSPORT",
+    "intent": "BOOK_RIDE",
+    "status": "PENDING_CONFIRMATION",
+    "user_request": "Book a ride for me.",
+    "entities": {
+      "vehicle": "ride",
+      "pickup": "College",
+      "destination": "KIMS Hospital",
+      "destination_type": "hospital",
+      "requested_time": null
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "user_voice",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_a897b3",
+    "timestamp": "2026-10-09T11:30:20.932610",
+    "type": "TRANSPORT",
+    "intent": "BOOK_RIDE",
+    "status": "PENDING_CONFIRMATION",
+    "user_request": "Book me a bike from College to KIMS Hospital.",
+    "entities": {
+      "vehicle": "bike",
+      "pickup": "College",
+      "destination": "KIMS Hospital",
+      "destination_type": "hospital",
+      "requested_time": null
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "user_voice",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_a19735",
+    "timestamp": "2026-10-09T11:32:46.550589",
+    "type": "COMMUNICATION",
+    "intent": "MAKE_PHONE_CALL",
+    "status": "CONFIRMED",
+    "user_request": "Can you call Rohit?",
+    "entities": {
+      "contact": "Rohit",
+      "phone": "+91 9701350218",
+      "status": "CONFIRMED"
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "voice_dialogue",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_d21d88",
+    "timestamp": "2026-10-09T11:37:36.191315",
+    "type": "TRANSPORT",
+    "intent": "BOOK_RIDE",
+    "status": "PENDING_CONFIRMATION",
+    "user_request": "Book a ride for me.",
+    "entities": {
+      "vehicle": "ride",
+      "pickup": "College",
+      "destination": "KIMS Hospital",
+      "destination_type": "hospital",
+      "requested_time": null
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "user_voice",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_f10b70",
+    "timestamp": "2026-10-09T11:37:36.213522",
+    "type": "TRANSPORT",
+    "intent": "BOOK_RIDE",
+    "status": "PENDING_CONFIRMATION",
+    "user_request": "Book me a bike from College to KIMS Hospital.",
+    "entities": {
+      "vehicle": "bike",
+      "pickup": "College",
+      "destination": "KIMS Hospital",
+      "destination_type": "hospital",
+      "requested_time": null
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "user_voice",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_bd8380",
+    "timestamp": "2026-10-09T11:47:42.196391",
+    "type": "TRANSPORT",
+    "intent": "BOOK_RIDE",
+    "status": "PENDING_CONFIRMATION",
+    "user_request": "Book a ride for me.",
+    "entities": {
+      "vehicle": "ride",
+      "pickup": "College",
+      "destination": "KIMS Hospital",
+      "destination_type": "hospital",
+      "requested_time": null
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "user_voice",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_0f983f",
+    "timestamp": "2026-10-09T11:47:42.219942",
+    "type": "TRANSPORT",
+    "intent": "BOOK_RIDE",
+    "status": "PENDING_CONFIRMATION",
+    "user_request": "Book me a bike from College to KIMS Hospital.",
+    "entities": {
+      "vehicle": "bike",
+      "pickup": "College",
+      "destination": "KIMS Hospital",
+      "destination_type": "hospital",
+      "requested_time": null
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "user_voice",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_b0f2e1",
+    "timestamp": "2026-10-09T11:49:37.611742",
+    "type": "COMMUNICATION",
+    "intent": "MAKE_PHONE_CALL",
+    "status": "CONFIRMED",
+    "user_request": "Just call Rohit.",
+    "entities": {
+      "contact": "Rohit",
+      "phone": "+91 9701350218",
+      "status": "CONFIRMED"
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "voice_dialogue",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_f37347",
+    "timestamp": "2026-10-09T11:51:45.252891",
+    "type": "COMMUNICATION",
+    "intent": "MAKE_PHONE_CALL",
+    "status": "CONFIRMED",
+    "user_request": "Can you just call Rohit?",
+    "entities": {
+      "contact": "Rohit",
+      "phone": "+91 9701350218",
+      "status": "CONFIRMED"
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "voice_dialogue",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_69a9de",
+    "timestamp": "2026-10-09T11:56:27.234543",
+    "type": "TRANSPORT",
+    "intent": "BOOK_RIDE",
+    "status": "PENDING_CONFIRMATION",
+    "user_request": "Book a ride for me.",
+    "entities": {
+      "vehicle": "ride",
+      "pickup": "College",
+      "destination": "KIMS Hospital",
+      "destination_type": "hospital",
+      "requested_time": null
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "user_voice",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_110e96",
+    "timestamp": "2026-10-09T11:56:27.264531",
+    "type": "TRANSPORT",
+    "intent": "BOOK_RIDE",
+    "status": "PENDING_CONFIRMATION",
+    "user_request": "Book me a bike from College to KIMS Hospital.",
+    "entities": {
+      "vehicle": "bike",
+      "pickup": "College",
+      "destination": "KIMS Hospital",
+      "destination_type": "hospital",
+      "requested_time": null
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "user_voice",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_b75b3b",
+    "timestamp": "2026-10-09T11:58:27.066981",
+    "type": "COMMUNICATION",
+    "intent": "MAKE_PHONE_CALL",
+    "status": "CONFIRMED",
+    "user_request": "Can you call Rohit?",
+    "entities": {
+      "contact": "Rohit",
+      "phone": "+91 9701350218",
+      "status": "CONFIRMED"
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "voice_dialogue",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_54c65d",
+    "timestamp": "2026-10-09T12:01:04.508394",
+    "type": "COMMUNICATION",
+    "intent": "MAKE_PHONE_CALL",
+    "status": "CONFIRMED",
+    "user_request": "Can you call Rohit?",
+    "entities": {
+      "contact": "Rohit",
+      "phone": "+91 9701350218",
+      "status": "CONFIRMED"
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "voice_dialogue",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_7cff69",
+    "timestamp": "2026-10-09T12:02:48.975109",
+    "type": "COMMUNICATION",
+    "intent": "MAKE_PHONE_CALL",
+    "status": "CONFIRMED",
+    "user_request": "Can you call Rohit?",
+    "entities": {
+      "contact": "Rohit",
+      "phone": "+91 9701350218",
+      "status": "CONFIRMED"
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "voice_dialogue",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_4c9c4f",
+    "timestamp": "2026-10-09T12:06:30.894494",
+    "type": "TRANSPORT",
+    "intent": "BOOK_RIDE",
+    "status": "PENDING_CONFIRMATION",
+    "user_request": "Book a ride for me.",
+    "entities": {
+      "vehicle": "ride",
+      "pickup": "College",
+      "destination": "KIMS Hospital",
+      "destination_type": "hospital",
+      "requested_time": null
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "user_voice",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_28cdfc",
+    "timestamp": "2026-10-09T12:06:30.915602",
+    "type": "TRANSPORT",
+    "intent": "BOOK_RIDE",
+    "status": "PENDING_CONFIRMATION",
+    "user_request": "Book me a bike from College to KIMS Hospital.",
+    "entities": {
+      "vehicle": "bike",
+      "pickup": "College",
+      "destination": "KIMS Hospital",
+      "destination_type": "hospital",
+      "requested_time": null
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "user_voice",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_ee422e",
+    "timestamp": "2026-10-09T12:08:21.866845",
+    "type": "COMMUNICATION",
+    "intent": "MAKE_PHONE_CALL",
+    "status": "CONFIRMED",
+    "user_request": "Call Rohit.",
+    "entities": {
+      "contact": "Rohit",
+      "phone": "+91 9701350218",
+      "status": "CONFIRMED"
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "voice_dialogue",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_27e994",
+    "timestamp": "2026-10-09T12:12:52.847215",
+    "type": "TRANSPORT",
+    "intent": "BOOK_RIDE",
+    "status": "PENDING_CONFIRMATION",
+    "user_request": "Book a ride for me.",
+    "entities": {
+      "vehicle": "ride",
+      "pickup": "College",
+      "destination": "KIMS Hospital",
+      "destination_type": "hospital",
+      "requested_time": null
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "user_voice",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_80f158",
+    "timestamp": "2026-10-09T12:12:52.862782",
+    "type": "TRANSPORT",
+    "intent": "BOOK_RIDE",
+    "status": "PENDING_CONFIRMATION",
+    "user_request": "Book me a bike from College to KIMS Hospital.",
+    "entities": {
+      "vehicle": "bike",
+      "pickup": "College",
+      "destination": "KIMS Hospital",
+      "destination_type": "hospital",
+      "requested_time": null
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "user_voice",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_549253",
+    "timestamp": "2026-10-09T12:15:32.305784",
+    "type": "COMMUNICATION",
+    "intent": "MAKE_PHONE_CALL",
+    "status": "CONFIRMED",
+    "user_request": "Can you call Rohit?",
+    "entities": {
+      "contact": "Rohit",
+      "phone": "+91 9701350218",
+      "status": "CONFIRMED"
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "voice_dialogue",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_62ff94",
+    "timestamp": "2026-10-09T12:28:05.501017",
+    "type": "TRANSPORT",
+    "intent": "BOOK_RIDE",
+    "status": "PENDING_CONFIRMATION",
+    "user_request": "Book a ride for me.",
+    "entities": {
+      "vehicle": "ride",
+      "pickup": "College",
+      "destination": "KIMS Hospital",
+      "destination_type": "hospital",
+      "requested_time": null
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "user_voice",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_021b0e",
+    "timestamp": "2026-10-09T12:28:05.513337",
+    "type": "TRANSPORT",
+    "intent": "BOOK_RIDE",
+    "status": "PENDING_CONFIRMATION",
+    "user_request": "Book me a bike from College to KIMS Hospital.",
+    "entities": {
+      "vehicle": "bike",
+      "pickup": "College",
+      "destination": "KIMS Hospital",
+      "destination_type": "hospital",
+      "requested_time": null
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "user_voice",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_b47cae",
+    "timestamp": "2026-10-09T12:32:14.077756",
+    "type": "COMMUNICATION",
+    "intent": "MAKE_PHONE_CALL",
+    "status": "FAILED",
+    "user_request": "Call Rohit",
+    "entities": {
+      "contact": "Rohit",
+      "phone": "+91 9701350218",
+      "status": "FAILED"
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "voice_dialogue",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_2a91e6",
+    "timestamp": "2026-10-09T12:49:08.432432",
+    "type": "TRANSPORT",
+    "intent": "BOOK_RIDE",
+    "status": "PENDING_CONFIRMATION",
+    "user_request": "Book a ride for me.",
+    "entities": {
+      "vehicle": "ride",
+      "pickup": "College",
+      "destination": "KIMS Hospital",
+      "destination_type": "hospital",
+      "requested_time": null
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "user_voice",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_bf1bb3",
+    "timestamp": "2026-10-09T12:49:08.447390",
+    "type": "TRANSPORT",
+    "intent": "BOOK_RIDE",
+    "status": "PENDING_CONFIRMATION",
+    "user_request": "Book me a bike from College to KIMS Hospital.",
+    "entities": {
+      "vehicle": "bike",
+      "pickup": "College",
+      "destination": "KIMS Hospital",
+      "destination_type": "hospital",
+      "requested_time": null
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "user_voice",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  },
+  {
+    "id": "act_20261009_009c9e",
+    "timestamp": "2026-10-09T12:50:23.539041",
+    "type": "COMMUNICATION",
+    "intent": "MAKE_PHONE_CALL",
+    "status": "FAILED",
+    "user_request": "Can you call Rohit?",
+    "entities": {
+      "contact": "Rohit",
+      "phone": "+91 9701350218",
+      "status": "FAILED"
+    },
+    "integration": {
+      "provider": null,
+      "executed": false
+    },
+    "source": "voice_dialogue",
+    "verification": {
+      "confirmed_by_user": false,
+      "needs_clarification": false
+    }
+  }
+]

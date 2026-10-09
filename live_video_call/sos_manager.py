@@ -38,9 +38,9 @@ logger = logging.getLogger("SosManager")
 # CONFIGURATION - SOS SETTINGS
 # ==============================================================================
 SOS_DISTANCE_MM = int(os.getenv("SOS_DISTANCE_MM", "300"))
-SOS_CONFIRMATION_TIMEOUT_SECONDS = float(os.getenv("SOS_CONFIRMATION_TIMEOUT_SECONDS", "7.0"))
-CAMERA_BLACK_BRIGHTNESS_THRESHOLD = float(os.getenv("CAMERA_BLACK_BRIGHTNESS_THRESHOLD", "20.0"))
-CAMERA_BLACK_DARK_RATIO_THRESHOLD = float(os.getenv("CAMERA_BLACK_DARK_RATIO_THRESHOLD", "0.95"))
+SOS_CONFIRMATION_TIMEOUT_SECONDS = float(os.getenv("SOS_CONFIRMATION_TIMEOUT_SECONDS", "30.0"))
+CAMERA_BLACK_BRIGHTNESS_THRESHOLD = float(os.getenv("CAMERA_BLACK_BRIGHTNESS_THRESHOLD", "45.0"))
+CAMERA_BLACK_DARK_RATIO_THRESHOLD = float(os.getenv("CAMERA_BLACK_DARK_RATIO_THRESHOLD", "0.80"))
 CAMERA_BLACK_MIN_FRAMES = int(os.getenv("CAMERA_BLACK_MIN_FRAMES", "5"))
 CAMERA_BLACK_MIN_DURATION_SEC = float(os.getenv("CAMERA_BLACK_MIN_DURATION_SEC", "1.0"))
 # ==============================================================================
@@ -70,6 +70,20 @@ class CameraBlackDetector:
         """Manually override camera black state for safe unit testing."""
         self._simulated_black = simulated
 
+    def report_stream_drop(self) -> bool:
+        """Called when camera feed is lost or disconnected during operation."""
+        if self._simulated_black is not None:
+            self.is_confirmed_black = self._simulated_black
+            return self.is_confirmed_black
+        now = time.time()
+        self.consecutive_black_count += 1
+        if self.first_black_time is None:
+            self.first_black_time = now
+        elapsed = now - self.first_black_time
+        if self.consecutive_black_count >= self.min_consecutive_frames and elapsed >= self.min_duration_seconds:
+            self.is_confirmed_black = True
+        return self.is_confirmed_black
+
     def process_frame(self, frame: Optional[np.ndarray]) -> bool:
         """Analyze a camera frame and update the black confirmation status."""
         if self._simulated_black is not None:
@@ -77,7 +91,7 @@ class CameraBlackDetector:
             return self.is_confirmed_black
 
         if frame is None or frame.size == 0:
-            return self.is_confirmed_black
+            return self.report_stream_drop()
 
         mean_brightness = float(np.mean(frame))
 
@@ -100,9 +114,12 @@ class CameraBlackDetector:
             ):
                 self.is_confirmed_black = True
         else:
-            self.consecutive_black_count = 0
-            self.first_black_time = None
-            self.is_confirmed_black = False
+            # Only reset if we see normal light (decrement count to absorb 1-frame camera noise)
+            if self.consecutive_black_count > 0:
+                self.consecutive_black_count -= 1
+            if self.consecutive_black_count == 0:
+                self.first_black_time = None
+                self.is_confirmed_black = False
 
         return self.is_confirmed_black
 
@@ -280,8 +297,11 @@ class SosManager:
         self.state = self.STATE_SOS_CHECKING
         self.has_asked_question = True
 
-        print("[SOS] Asking user for confirmation.")
-        print(f"[SOS] Waiting {int(self.timeout_seconds)} seconds for response...")
+        print("\n" + "!" * 65)
+        print(" [SOS] !!! POSSIBLE EMERGENCY DETECTED: CAMERA BLACKOUT !!!")
+        print(" [SOS] Marvin asking user: \"Are you okay?\"")
+        print(f" [SOS] Waiting {int(self.timeout_seconds)}s for user response before emergency dispatch...")
+        print("!" * 65 + "\n")
 
         # Formulate prompt for existing Gemini Live session
         prompt = (

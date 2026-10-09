@@ -82,6 +82,7 @@ class GeminiLiveSession:
         self.on_turn_complete: Optional[Callable[[], None]] = None
         self.on_interrupted: Optional[Callable[[], None]] = None
         self.frame_sent_callbacks: List[Callable[[int], None]] = []
+        self.suppress_audio_output: bool = False
 
     @property
     def is_connected(self) -> bool:
@@ -156,6 +157,10 @@ class GeminiLiveSession:
                 if not self._is_connected or not self._session:
                     break
 
+                # Do not stream mic audio to Gemini while Gemini is responding
+                if self.audio and getattr(self.audio, "state", None) == "RESPONDING":
+                    continue
+
                 try:
                     await self._session.send_realtime_input(
                         audio=types.Blob(data=chunk, mime_type="audio/pcm;rate=16000")
@@ -174,6 +179,11 @@ class GeminiLiveSession:
         logger.info(f"Starting video stream (~{1.0 / self.frame_interval_sec:.1f} FPS)...")
         try:
             while self._is_connected:
+                # Pause sending background video frames while Gemini is actively responding
+                if self.audio and getattr(self.audio, "state", None) == "RESPONDING":
+                    await asyncio.sleep(0.3)
+                    continue
+
                 if self.camera:
                     jpeg_bytes = self.camera.get_latest_jpeg()
                     if jpeg_bytes:
@@ -195,6 +205,7 @@ class GeminiLiveSession:
             logger.debug("Video stream loop cancelled.")
         except Exception as e:
             logger.error(f"Video stream loop error: {e}")
+
 
     async def _receive_loop(self):
         """Continuously process incoming server messages from Gemini Live across all turns."""
@@ -220,7 +231,7 @@ class GeminiLiveSession:
                     if model_turn:
                         for part in model_turn.parts:
                             if part.inline_data and part.inline_data.data:
-                                if self.audio:
+                                if self.audio and not self.suppress_audio_output:
                                     self.audio.play_audio(part.inline_data.data)
 
                     # 3. User speech transcription
@@ -252,8 +263,13 @@ class GeminiLiveSession:
             except asyncio.CancelledError:
                 break
             except Exception as e:
+                err_str = str(e)
+                if "1008" in err_str or "aborted" in err_str.lower() or "closed" in err_str.lower():
+                    logger.warning(f"[GEMINI] Session closed ({e}). Receive loop exiting.")
+                    self._is_connected = False
+                    break
                 logger.error(f"Error in Gemini receive loop: {e}")
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(1.0)
 
     async def send_text(self, text: str):
         """Send text message into the live session using realtime input."""

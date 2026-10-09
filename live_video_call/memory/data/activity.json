@@ -1,1 +1,98 @@
-[]
+[
+  {
+    "timestamp": "2026-10-09T11:11:04.613631",
+    "time_str": "11:11",
+    "request": "Call Rohit.",
+    "summary": "Phone call placed: Rohit (+91 9701350218)",
+    "category": "COMMUNICATION",
+    "intent": "MAKE_PHONE_CALL"
+  },
+  {
+    "timestamp": "2026-10-09T11:12:31.788390",
+    "time_str": "11:12",
+    "request": "Can you call Raj?",
+    "summary": "Phone call placed: Raj (9347321258)",
+    "category": "COMMUNICATION",
+    "intent": "MAKE_PHONE_CALL"
+  },
+  {
+    "timestamp": "2026-10-09T11:32:46.555285",
+    "time_str": "11:32",
+    "request": "Can you call Rohit?",
+    "summary": "Phone call placed: Rohit (+91 9701350218)",
+    "category": "COMMUNICATION",
+    "intent": "MAKE_PHONE_CALL"
+  },
+  {
+    "timestamp": "2026-10-09T11:49:37.626342",
+    "time_str": "11:49",
+    "request": "Just call Rohit.",
+    "summary": "Phone call placed: Rohit (+91 9701350218)",
+    "category": "COMMUNICATION",
+    "intent": "MAKE_PHONE_CALL"
+  },
+  {
+    "timestamp": "2026-10-09T11:51:45.275175",
+    "time_str": "11:51",
+    "request": "Can you just call Rohit?",
+    "summary": "Phone call placed: Rohit (+91 9701350218)",
+    "category": "COMMUNICATION",
+    "intent": "MAKE_PHONE_CALL"
+  },
+  {
+    "timestamp": "2026-10-09T11:58:27.089108",
+    "time_str": "11:58",
+    "request": "Can you call Rohit?",
+    "summary": "Phone call placed: Rohit (+91 9701350218)",
+    "category": "COMMUNICATION",
+    "intent": "MAKE_PHONE_CALL"
+  },
+  {
+    "timestamp": "2026-10-09T12:01:04.537012",
+    "time_str": "12:01",
+    "request": "Can you call Rohit?",
+    "summary": "Phone call placed: Rohit (+91 9701350218)",
+    "category": "COMMUNICATION",
+    "intent": "MAKE_PHONE_CALL"
+  },
+  {
+    "timestamp": "2026-10-09T12:02:48.998587",
+    "time_str": "12:02",
+    "request": "Can you call Rohit?",
+    "summary": "Phone call placed: Rohit (+91 9701350218)",
+    "category": "COMMUNICATION",
+    "intent": "MAKE_PHONE_CALL"
+  },
+  {
+    "timestamp": "2026-10-09T12:08:21.883928",
+    "time_str": "12:08",
+    "request": "Call Rohit.",
+    "summary": "Phone call action: Rohit (+91 9701350218) - Status: DIALER_OPENED (Tap Call on phone)",
+    "category": "COMMUNICATION",
+    "intent": "MAKE_PHONE_CALL"
+  },
+  {
+    "timestamp": "2026-10-09T12:15:32.356171",
+    "time_str": "12:15",
+    "request": "Can you call Rohit?",
+    "summary": "Phone call action: Rohit (+91 9701350218) - Status: DIALER_OPENED (Tap Call on phone)",
+    "category": "COMMUNICATION",
+    "intent": "MAKE_PHONE_CALL"
+  },
+  {
+    "timestamp": "2026-10-09T12:32:14.097593",
+    "time_str": "12:32",
+    "request": "Call Rohit",
+    "summary": "Phone call action: Rohit (+91 9701350218) - Status: PERMISSION_BLOCKED (Companion App / CALL_PHONE required)",
+    "category": "COMMUNICATION",
+    "intent": "MAKE_PHONE_CALL"
+  },
+  {
+    "timestamp": "2026-10-09T12:50:23.548175",
+    "time_str": "12:50",
+    "request": "Can you call Rohit?",
+    "summary": "Phone call action: Rohit (+91 9701350218) - Status: PERMISSION_BLOCKED (Companion App / CALL_PHONE required)",
+    "category": "COMMUNICATION",
+    "intent": "MAKE_PHONE_CALL"
+  }
+]

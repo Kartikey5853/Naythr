@@ -172,6 +172,9 @@ class MemoryManager:
             elif category == "PURCHASE":
                 p = intent_result.entities.get("product", "item")
                 summary_desc = f"Order request: {p}"
+            elif category == "COMMUNICATION":
+                c = intent_result.entities.get("target") or intent_result.entities.get("contact_name") or "phone call"
+                summary_desc = f"Call request: {c}"
 
             self._log_activity(
                 request=intent_result.user_request,

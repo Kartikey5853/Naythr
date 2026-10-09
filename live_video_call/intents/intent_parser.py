@@ -90,7 +90,12 @@ class IntentParser:
         normalized = re.sub(r"[\.\?!,;]+$", "", cleaned).strip()
         lowered = normalized.lower()
 
-        # 1. Filter out casual conversation and visual queries
+        # 1. Check for Communication / Phone call requests (e.g. 'call Mom', 'dial 9876543210', 'call this guy')
+        call_res = self._extract_call_intent(cleaned, normalized, lowered)
+        if call_res:
+            return call_res
+
+        # 2. Filter out casual conversation and visual queries
         if self._is_casual_or_navigation(lowered):
             return IntentResult(
                 should_store=False,
@@ -98,7 +103,7 @@ class IntentParser:
                 user_request=cleaned,
             )
 
-        # 2. Check for Purchase / Ordering requests (takes precedence over prescription if "buy/order" is present)
+        # 3. Check for Purchase / Ordering requests (takes precedence over prescription if "buy/order" is present)
         purchase_res = self._extract_purchase_intent(cleaned, normalized, lowered)
         if purchase_res:
             return purchase_res
@@ -500,3 +505,85 @@ class IntentParser:
             if any(k in q for k in keywords):
                 return dtype
         return None
+
+    def _extract_call_intent(self, raw_text: str, norm_text: str, lowered: str) -> Optional[IntentResult]:
+        """Detect and parse phone call and communication intents."""
+        # Strip wake-word prefix if present: "hey marvin, call john" -> "call john"
+        clean_lowered = re.sub(r"^(?:hey\s+marvin|hello\s+marvin|hi\s+marvin|marvin)[,\s:]*", "", lowered).strip()
+        clean_norm = re.sub(r"^(?:hey\s+marvin|hello\s+marvin|hi\s+marvin|marvin)[,\s:]*", "", norm_text, flags=re.IGNORECASE).strip()
+
+        # Reject idioms and casual questions: "what do you call this", "call it a day", "wake-up call"
+        if re.search(r"\b(what do you call|what is this called|call it a day|wake-up call|wake up call)\b", clean_lowered):
+            return None
+
+        # Strip leading conversational/polite prefixes:
+        # e.g. "can you", "could you", "would you", "will you", "please", "just", "kindly",
+        # "i want to", "i need to", "help me", "go ahead and", "try to", "can we"
+        filler_pattern = r"^(?:can\s+you|could\s+you|would\s+you|will\s+you|please|just|kindly|i\s+want\s+to|i'd\s+like\s+to|i\s+need\s+to|help\s+me|go\s+ahead\s+and|try\s+to|can\s+we|marvin)\s+"
+        while re.search(filler_pattern, clean_lowered):
+            clean_lowered = re.sub(filler_pattern, "", clean_lowered).strip()
+
+        # Pattern: (call|dial|phone|ring|make a call to|place a call to) <target>
+        call_patterns = [
+            r"^(?:call|dial|phone|ring|make\s+a\s+call\s+to|make\s+a\s+phone\s+call\s+to|place\s+a\s+call\s+to|put\s+a\s+call\s+through\s+to|connect\s+me\s+(?:with|to))\s+(.+)$",
+        ]
+
+        target_raw: Optional[str] = None
+        for pat in call_patterns:
+            m = re.match(pat, clean_lowered)
+            if m:
+                target_raw = m.group(1).strip()
+                break
+
+        if not target_raw:
+            return None
+
+        # Clean trailing punctuation
+        target_raw = re.sub(r"[\.\?!,;]+$", "", target_raw).strip()
+        # Clean phrases like "for me", "now", "please", "urgently", "on phone"
+        target_raw = re.sub(r"\b(for\s+me|right\s+now|now|please|urgently|immediately|on\s+phone|on\s+mobile|up)\b", "", target_raw).strip()
+
+        if not target_raw:
+            return None
+
+        # Check if target is a phone number (digits with optional +, spaces, hyphens)
+        phone_match = re.match(r"^(\+?[\d\s\-\(\)]{5,20})$", target_raw)
+        is_phone = bool(phone_match and re.search(r"\d{5,}", target_raw.replace(" ", "").replace("-", "")))
+        phone_number = None
+        contact_name = None
+
+        if is_phone:
+            phone_number = re.sub(r"[^\d\+]", "", target_raw)
+            target = phone_number
+        else:
+            # Clean articles / possessives: "my mom" -> "mom", "the doctor" -> "doctor"
+            cleaned_target = re.sub(r"^(?:my|the|a)\s+", "", target_raw).strip()
+            contact_name = cleaned_target.title()
+            target = cleaned_target
+
+        # Check for vague/ambiguous targets: "this guy", "him", "her", "them", "someone", "somebody"
+        vague_targets = {"this guy", "that guy", "him", "her", "them", "someone", "somebody", "a person", "anyone"}
+        requires_clarification = target.lower() in vague_targets or len(target) == 0
+        clarification_prompt = (
+            "Who would you like me to call, or what is their phone number?"
+            if requires_clarification
+            else None
+        )
+
+        return IntentResult(
+            should_store=True,
+            category="COMMUNICATION",
+            intent="MAKE_PHONE_CALL",
+            confidence=0.95,
+            entities={
+                "target": contact_name or phone_number or target_raw,
+                "contact_name": contact_name,
+                "phone_number": phone_number,
+                "raw_target": target_raw,
+                "status": "PENDING_CONFIRMATION",
+            },
+            requires_clarification=requires_clarification,
+            clarification_prompt=clarification_prompt,
+            user_request=raw_text,
+        )
+

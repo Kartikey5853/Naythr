@@ -1,0 +1,32 @@
+{
+  "mom": {
+    "name": "Mom",
+    "phone": "+91 98765 43210",
+    "relation": "family",
+    "aliases": ["mom", "mother", "mummy", "maa", "my mom"]
+  },
+  "rohit": {
+    "name": "Rohit",
+    "phone": "+91 9701350218",
+    "relation": "friend",
+    "aliases": ["rohit", "rohit sharma", "my friend rohit"]
+  },
+  "john": {
+    "name": "RAJ",
+    "phone": "+91 9347321258",
+    "relation": "friend",
+    "aliases": ["john", "johnny"]
+  },
+  "doctor": {
+    "name": "Dr. Sharma",
+    "phone": "+91 99887 76655",
+    "relation": "physician",
+    "aliases": ["doctor", "doc", "dr sharma", "clinic", "my doctor"]
+  },
+  "emergency": {
+    "name": "Emergency Services",
+    "phone": "112",
+    "relation": "emergency",
+    "aliases": ["emergency", "police", "ambulance", "911", "112"]
+  }
+}
